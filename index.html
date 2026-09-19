@@ -323,9 +323,13 @@ function currentEntryValues() {
   const num = id => Number(document.getElementById(id).value || 0);
   const expenseTotal = state.expenseLines.reduce((s, l) => s + Number(l.amount || 0), 0);
   const deliveryTotal = state.deliveryLines.reduce((s, l) => s + Number(l.amount || 0), 0);
+  // Total revenue (for display) includes card/e-wallet sales.
   const moneyIn = num('cashSales') + num('cardSales') + num('receivablesCollected');
   const moneyOut = num('cashDeposited') + expenseTotal + deliveryTotal;
-  const expected = moneyIn - moneyOut;
+  // Expected PHYSICAL CASH excludes card/e-wallet sales — that money never
+  // touches the drawer, so it shouldn't be part of the cash reconciliation.
+  const cashMoneyIn = num('cashSales') + num('receivablesCollected');
+  const expected = cashMoneyIn - moneyOut;
   const actual = num('actualBalance');
   return { moneyIn, moneyOut, expected, actual, variance: actual - expected };
 }
@@ -335,10 +339,11 @@ function reviewEntry() {
   const matches = Math.abs(v.variance) < 0.01;
   document.getElementById('reviewBox').innerHTML = `
     <div class="review-box">
-      <div class="review-row"><span>Total Money In</span><span class="num">${peso(v.moneyIn)}</span></div>
+      <div class="review-row"><span>Total Revenue (cash + card + receivables)</span><span class="num">${peso(v.moneyIn)}</span></div>
       <div class="review-row"><span>Total Money Out</span><span class="num">${peso(v.moneyOut)}</span></div>
-      <div class="review-row total"><span>Expected Balance</span><span class="num">${peso(v.expected)}</span></div>
-      <div class="review-row"><span>Actual Entered</span><span class="num">${peso(v.actual)}</span></div>
+      <div class="review-row total"><span>Expected Cash on Hand</span><span class="num">${peso(v.expected)}</span></div>
+      <p class="muted" style="margin:2px 0 8px;">Card/e-wallet sales are excluded here — that money never enters the drawer.</p>
+      <div class="review-row"><span>Actual Cash Counted</span><span class="num">${peso(v.actual)}</span></div>
       <div class="review-row total">
         <span>${matches ? 'Matches' : 'Variance'}</span>
         <span class="num ${matches ? 'match' : 'mismatch'}">${matches ? '✓ Matches' : peso(v.variance)}</span>
