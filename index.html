@@ -6,15 +6,17 @@
 <title>Station Ledger</title>
 <style>
   :root {
-    --ink: #1b2b28;
-    --paper: #f6f5f1;
-    --line: #d8d5cb;
-    --accent: #2f6f5e;
-    --accent-dark: #1f4d40;
+    --ink: #12204a;
+    --paper: #f7f8fa;
+    --line: #d7dbe4;
+    --navy: #14206b;
+    --navy-dark: #0c1547;
+    --accent: #2e8f3f;
+    --accent-dark: #1f6b2c;
     --danger: #a83e3e;
     --danger-bg: #fbeeee;
     --ok-bg: #eaf3ee;
-    --muted: #6b6f6a;
+    --muted: #5c6478;
     --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
     --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
   }
@@ -35,7 +37,7 @@
   /* Top bar */
   .topbar {
     display: flex; justify-content: space-between; align-items: center;
-    padding-bottom: 16px; border-bottom: 2px solid var(--ink); margin-bottom: 20px;
+    padding-bottom: 16px; border-bottom: 3px solid var(--navy); margin-bottom: 20px;
   }
   .topbar .who { font-size: 0.85rem; color: var(--muted); }
   .btn {
@@ -51,9 +53,9 @@
   /* Login */
   .login-box {
     max-width: 340px; margin: 15vh auto 0; background: white; border: 1px solid var(--line);
-    border-radius: 10px; padding: 32px;
+    border-top: 4px solid var(--navy); border-radius: 10px; padding: 32px;
   }
-  .login-box h1 { text-align: center; margin-bottom: 4px; }
+  .login-box h1 { text-align: center; margin-bottom: 4px; color: var(--navy); }
   .login-box p.sub { text-align: center; color: var(--muted); font-size: 0.85rem; margin-bottom: 24px; }
   label { display: block; font-size: 0.82rem; color: var(--muted); margin: 14px 0 4px; }
   input, select {
@@ -115,7 +117,7 @@
 /* ====================================================================
    CONFIG — paste your deployed Google Apps Script Web App URL below
    ==================================================================== */
-const API_URL = "https://script.google.com/macros/s/AKfycbyoNHnCiMQfwsqrceE1-usAI2dYWz1attvnVr6DywcKbBQ0g1AzVx_R7Jc8olvYsIha/exec";
+const API_URL = "PASTE_YOUR_APPS_SCRIPT_URL_HERE";
 
 /* ==================== API helper ====================
    Uses text/plain content-type on purpose — this avoids a CORS
@@ -217,10 +219,12 @@ async function renderManager() {
 
     <div class="tabs">
       <div class="tab active" data-tab="entry" onclick="switchTab('entry')">New Shift Entry</div>
+      <div class="tab" data-tab="fuel" onclick="switchTab('fuel')">Fuel Reading</div>
       <div class="tab" data-tab="history" onclick="switchTab('history')">History</div>
     </div>
 
     <div id="tab-entry">${entryFormHtml()}</div>
+    <div id="tab-fuel" class="hidden"></div>
     <div id="tab-history" class="hidden"></div>
   `;
 }
@@ -228,8 +232,10 @@ async function renderManager() {
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
   document.getElementById('tab-entry').classList.toggle('hidden', name !== 'entry');
+  document.getElementById('tab-fuel').classList.toggle('hidden', name !== 'fuel');
   document.getElementById('tab-history').classList.toggle('hidden', name !== 'history');
   if (name === 'history') loadManagerHistory();
+  if (name === 'fuel') loadFuelTab();
 }
 
 function entryFormHtml() {
@@ -241,7 +247,7 @@ function entryFormHtml() {
     </div>
 
     <div class="card">
-      <h2 style="margin-top:0;">Money In</h2>
+      <h2 style="margin-top:0;">Cash In</h2>
       <label>Cash Sales</label>
       <input type="number" id="cashSales" value="0" step="0.01">
       <label>Card / E-wallet Sales</label>
@@ -251,7 +257,7 @@ function entryFormHtml() {
     </div>
 
     <div class="card">
-      <h2 style="margin-top:0;">Money Out</h2>
+      <h2 style="margin-top:0;">Cash Out</h2>
       <label>Cash Deposited to Bank</label>
       <input type="number" id="cashDeposited" value="0" step="0.01">
 
@@ -340,7 +346,7 @@ function reviewEntry() {
   document.getElementById('reviewBox').innerHTML = `
     <div class="review-box">
       <div class="review-row"><span>Total Revenue (cash + card + receivables)</span><span class="num">${peso(v.moneyIn)}</span></div>
-      <div class="review-row"><span>Total Money Out</span><span class="num">${peso(v.moneyOut)}</span></div>
+      <div class="review-row"><span>Total Cash Out</span><span class="num">${peso(v.moneyOut)}</span></div>
       <div class="review-row total"><span>Expected Cash on Hand</span><span class="num">${peso(v.expected)}</span></div>
       <p class="muted" style="margin:2px 0 8px;">Card/e-wallet sales are excluded here — that money never enters the drawer.</p>
       <div class="review-row"><span>Actual Cash Counted</span><span class="num">${peso(v.actual)}</span></div>
@@ -397,7 +403,7 @@ function historyTableHtml(entries) {
   if (!entries.length) return '<p class="muted">No entries yet.</p>';
   return `
     <table>
-      <tr><th>Date</th><th>In</th><th>Out</th><th>Variance</th><th>Status</th></tr>
+      <tr><th>Date</th><th>Cash In</th><th>Cash Out</th><th>Variance</th><th>Status</th></tr>
       ${entries.map(e => {
         const flagged = Math.abs(e.Variance) > 0.01;
         return `<tr class="${flagged ? 'flagged' : ''}">
@@ -410,6 +416,113 @@ function historyTableHtml(entries) {
       }).join('')}
     </table>
   `;
+}
+
+/* ==================== FUEL READING (Manager) ==================== */
+let fuelTypesForStation = [];
+
+async function loadFuelTab() {
+  const box = document.getElementById('tab-fuel');
+  box.innerHTML = '<p class="muted">Loading…</p>';
+  const res = await api('getFuelTypes', {});
+  fuelTypesForStation = (res.fuelTypes || []).filter(f => f.StationID === state.user.stationId);
+
+  if (!fuelTypesForStation.length) {
+    box.innerHTML = '<p class="muted">No fuel types set up for this station yet. Ask the owner to add them.</p>';
+    return;
+  }
+
+  box.innerHTML = `
+    <div class="card">
+      <label>Fuel Type</label>
+      <select id="fuelTypeSelect">
+        ${fuelTypesForStation.map(f => `<option value="${f.FuelTypeID}">${f.Name}</option>`).join('')}
+      </select>
+      <label>Reading Date</label>
+      <input type="date" id="fuelReadingDate" value="${new Date().toISOString().slice(0,10)}">
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0;">Dipstick Readings (Liters)</h2>
+      <label>Opening Dip</label>
+      <input type="number" id="openingDip" value="0" step="0.01">
+      <label>Closing Dip</label>
+      <input type="number" id="closingDip" value="0" step="0.01">
+      <label>Fuel Delivered (if any)</label>
+      <input type="number" id="fuelDelivered" value="0" step="0.01">
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0;">Pump Meter Readings</h2>
+      <p class="muted">The cumulative totalizer numbers shown on the pump.</p>
+      <label>Meter Reading — Opening</label>
+      <input type="number" id="pumpMeterOpen" value="0" step="0.01">
+      <label>Meter Reading — Closing</label>
+      <input type="number" id="pumpMeterClose" value="0" step="0.01">
+    </div>
+
+    <button class="btn" onclick="reviewFuelEntry()">Review Fuel Entry</button>
+    <div id="fuelReviewBox"></div>
+  `;
+}
+
+function fuelEntryValues() {
+  const num = id => Number(document.getElementById(id).value || 0);
+  const litersSold = num('pumpMeterClose') - num('pumpMeterOpen');
+  const expectedClosingDip = num('openingDip') + num('fuelDelivered') - litersSold;
+  const actualClosingDip = num('closingDip');
+  return { litersSold, expectedClosingDip, actualClosingDip, variance: actualClosingDip - expectedClosingDip };
+}
+
+function liters(n) { return Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' L'; }
+
+function reviewFuelEntry() {
+  const v = fuelEntryValues();
+  const matches = Math.abs(v.variance) < 0.001;
+  document.getElementById('fuelReviewBox').innerHTML = `
+    <div class="review-box">
+      <div class="review-row"><span>Liters Sold (from meter)</span><span class="num">${liters(v.litersSold)}</span></div>
+      <div class="review-row total"><span>Expected Closing Dip</span><span class="num">${liters(v.expectedClosingDip)}</span></div>
+      <div class="review-row"><span>Actual Closing Dip</span><span class="num">${liters(v.actualClosingDip)}</span></div>
+      <div class="review-row total">
+        <span>${matches ? 'Matches' : 'Variance'}</span>
+        <span class="num ${matches ? 'match' : 'mismatch'}">${matches ? '✓ Matches' : liters(v.variance)}</span>
+      </div>
+      ${!matches ? `
+        <label>Reason for variance (required)</label>
+        <input id="fuelVarianceNote" placeholder="e.g. meter reset, pump not dispensing, spillage">
+      ` : ''}
+      <button class="btn" style="width:100%; margin-top:14px;" onclick="confirmFuelSubmit(${matches})">Confirm & Submit</button>
+    </div>
+  `;
+}
+
+async function confirmFuelSubmit(matches) {
+  const num = id => Number(document.getElementById(id).value || 0);
+  let note = '';
+  if (!matches) {
+    note = document.getElementById('fuelVarianceNote').value.trim();
+    if (!note) { alert('Please add a short reason for the variance before submitting.'); return; }
+  }
+  const payload = {
+    stationId: state.user.stationId,
+    fuelTypeId: document.getElementById('fuelTypeSelect').value,
+    employeeId: state.user.employeeId,
+    readingDate: document.getElementById('fuelReadingDate').value,
+    openingDip: num('openingDip'),
+    closingDip: num('closingDip'),
+    fuelDelivered: num('fuelDelivered'),
+    pumpMeterOpen: num('pumpMeterOpen'),
+    pumpMeterClose: num('pumpMeterClose'),
+    note
+  };
+  const res = await api('submitFuelEntry', payload);
+  if (res.success) {
+    alert('Fuel reading submitted.');
+    loadFuelTab();
+  } else {
+    alert('Error: ' + res.error);
+  }
 }
 
 /* ==================== OWNER VIEW ==================== */
@@ -428,12 +541,14 @@ async function renderOwner() {
 
     <div class="tabs">
       <div class="tab active" data-tab="dash" onclick="switchOwnerTab('dash')">Dashboard</div>
+      <div class="tab" data-tab="fuel" onclick="switchOwnerTab('fuel')">Fuel</div>
       <div class="tab" data-tab="history" onclick="switchOwnerTab('history')">History</div>
       <div class="tab" data-tab="managers" onclick="switchOwnerTab('managers')">Managers</div>
       <div class="tab" data-tab="categories" onclick="switchOwnerTab('categories')">Categories</div>
     </div>
 
     <div id="owner-dash"></div>
+    <div id="owner-fuel" class="hidden"></div>
     <div id="owner-history" class="hidden"></div>
     <div id="owner-managers" class="hidden"></div>
     <div id="owner-categories" class="hidden"></div>
@@ -443,11 +558,85 @@ async function renderOwner() {
 
 function switchOwnerTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
-  ['dash','history','managers','categories'].forEach(n =>
+  ['dash','fuel','history','managers','categories'].forEach(n =>
     document.getElementById('owner-' + n).classList.toggle('hidden', n !== name));
   if (name === 'history') loadOwnerHistory();
   if (name === 'managers') loadOwnerManagers();
   if (name === 'categories') loadOwnerCategories();
+  if (name === 'fuel') loadOwnerFuel();
+}
+
+async function loadOwnerFuel(range) {
+  range = range || 'today';
+  const box = document.getElementById('owner-fuel');
+  box.innerHTML = '<p class="muted">Loading…</p>';
+  const [dashRes, typesRes] = await Promise.all([api('getFuelDashboard', { range }), api('getFuelTypes', {})]);
+  const t = dashRes.totals;
+  const stationRows = Object.entries(dashRes.byStation).map(([id, s]) => `
+    <tr class="${s.flagCount > 0 ? 'flagged' : ''}">
+      <td>${s.name}</td>
+      <td class="num">${liters(s.litersDelivered)}</td>
+      <td class="num">${liters(s.litersSold)}</td>
+      <td class="num">${liters(s.variance)}</td>
+      <td>${s.flagCount > 0 ? `<span class="badge flag">${s.flagCount} flagged</span>` : '<span class="badge ok">OK</span>'}</td>
+    </tr>
+  `).join('');
+
+  const fuelTypes = typesRes.fuelTypes || [];
+
+  box.innerHTML = `
+    <div class="row" style="margin-bottom:14px;">
+      ${['today','week','month','year'].map(r =>
+        `<button class="btn ${r===range?'':'secondary'} small" onclick="loadOwnerFuel('${r}')">${r[0].toUpperCase()+r.slice(1)}</button>`
+      ).join('')}
+    </div>
+    <div class="grid2">
+      <div class="card stat"><div class="label">Fuel Delivered</div><div class="value num">${liters(t.litersDelivered)}</div></div>
+      <div class="card stat"><div class="label">Fuel Sold</div><div class="value num">${liters(t.litersSold)}</div></div>
+      <div class="card stat"><div class="label">Net Variance</div><div class="value num" style="color:${Math.abs(t.variance)>0.001?'var(--danger)':'var(--accent)'}">${liters(t.variance)}</div></div>
+      <div class="card stat"><div class="label">Flagged Readings</div><div class="value">${t.flagCount} / ${t.entryCount}</div></div>
+    </div>
+    <h2>By Station</h2>
+    <div class="card">
+      <table>
+        <tr><th>Station</th><th>Delivered</th><th>Sold</th><th>Variance</th><th>Status</th></tr>
+        ${stationRows || '<tr><td colspan="5" class="muted">No fuel data yet.</td></tr>'}
+      </table>
+    </div>
+    <h2>Fuel Types by Station</h2>
+    <div class="card">
+      <div class="grid2">
+        ${state.stations.map(s => `
+          <div>
+            <strong>${s.StationName}</strong>
+            ${fuelTypes.filter(f => f.StationID === s.StationID).map(f => `
+              <div class="row between" style="padding:6px 0; border-bottom:1px solid var(--line);">
+                <span>${f.Name}</span>
+                <button class="btn danger small" onclick="removeFuelTypeConfirm('${f.FuelTypeID}', '${s.StationID}')">Remove</button>
+              </div>`).join('') || '<p class="muted">None yet.</p>'}
+            <div class="row" style="margin-top:8px;">
+              <input id="newFuelType_${s.StationID}" placeholder="New fuel type">
+              <button class="btn small" onclick="submitAddFuelType('${s.StationID}')">Add</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+async function submitAddFuelType(stationId) {
+  const input = document.getElementById('newFuelType_' + stationId);
+  const name = input.value.trim();
+  if (!name) return;
+  await api('addFuelType', { stationId, name });
+  loadOwnerFuel();
+}
+
+async function removeFuelTypeConfirm(fuelTypeId) {
+  if (!confirm('Remove this fuel type?')) return;
+  await api('removeFuelType', { fuelTypeId });
+  loadOwnerFuel();
 }
 
 async function loadOwnerDashboard(range) {
@@ -473,15 +662,15 @@ async function loadOwnerDashboard(range) {
       ).join('')}
     </div>
     <div class="grid2">
-      <div class="card stat"><div class="label">Total Money In</div><div class="value num">${peso(t.moneyIn)}</div></div>
-      <div class="card stat"><div class="label">Total Money Out</div><div class="value num">${peso(t.moneyOut)}</div></div>
+      <div class="card stat"><div class="label">Total Cash In</div><div class="value num">${peso(t.moneyIn)}</div></div>
+      <div class="card stat"><div class="label">Total Cash Out</div><div class="value num">${peso(t.moneyOut)}</div></div>
       <div class="card stat"><div class="label">Net Variance</div><div class="value num" style="color:${Math.abs(t.variance)>0.01?'var(--danger)':'var(--accent)'}">${peso(t.variance)}</div></div>
       <div class="card stat"><div class="label">Flagged Shifts</div><div class="value">${t.flagCount} / ${t.entryCount}</div></div>
     </div>
     <h2>By Station</h2>
     <div class="card">
       <table>
-        <tr><th>Station</th><th>In</th><th>Out</th><th>Variance</th><th>Status</th></tr>
+        <tr><th>Station</th><th>Cash In</th><th>Cash Out</th><th>Variance</th><th>Status</th></tr>
         ${stationRows || '<tr><td colspan="5" class="muted">No data yet.</td></tr>'}
       </table>
     </div>
@@ -516,7 +705,7 @@ async function applyHistoryFilter() {
   lastHistoryEntries = res.entries || [];
   document.getElementById('ownerHistoryTable').innerHTML = `
     <table>
-      <tr><th>Date</th><th>Station</th><th>In</th><th>Out</th><th>Variance</th><th>Status</th></tr>
+      <tr><th>Date</th><th>Station</th><th>Cash In</th><th>Cash Out</th><th>Variance</th><th>Status</th></tr>
       ${lastHistoryEntries.map(e => {
         const flagged = Math.abs(e.Variance) > 0.01;
         const out = Number(e.CashDeposited) + e.ExpenseLines.reduce((s,l)=>s+Number(l.amount||0),0) + e.DeliveryLines.reduce((s,l)=>s+Number(l.amount||0),0);
