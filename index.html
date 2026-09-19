@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Station Ledger</title>
+<style>
+  :root {
+    --ink: #1b2b28;
+    --paper: #f6f5f1;
+    --line: #d8d5cb;
+    --accent: #2f6f5e;
+    --accent-dark: #1f4d40;
+    --danger: #a83e3e;
+    --danger-bg: #fbeeee;
+    --ok-bg: #eaf3ee;
+    --muted: #6b6f6a;
+    --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    min-height: 100vh;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 24px 16px 60px; }
+  h1, h2, h3 { font-weight: 700; letter-spacing: -0.01em; }
+  h1 { font-size: 1.4rem; margin: 0; }
+  h2 { font-size: 1.1rem; margin: 28px 0 10px; }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* Top bar */
+  .topbar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding-bottom: 16px; border-bottom: 2px solid var(--ink); margin-bottom: 20px;
+  }
+  .topbar .who { font-size: 0.85rem; color: var(--muted); }
+  .btn {
+    background: var(--accent); color: white; border: none; border-radius: 6px;
+    padding: 10px 16px; font-size: 0.95rem; cursor: pointer; font-family: var(--sans);
+  }
+  .btn:hover { background: var(--accent-dark); }
+  .btn.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  .btn.danger { background: var(--danger); }
+  .btn.small { padding: 6px 10px; font-size: 0.82rem; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Login */
+  .login-box {
+    max-width: 340px; margin: 15vh auto 0; background: white; border: 1px solid var(--line);
+    border-radius: 10px; padding: 32px;
+  }
+  .login-box h1 { text-align: center; margin-bottom: 4px; }
+  .login-box p.sub { text-align: center; color: var(--muted); font-size: 0.85rem; margin-bottom: 24px; }
+  label { display: block; font-size: 0.82rem; color: var(--muted); margin: 14px 0 4px; }
+  input, select {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px;
+    font-size: 1rem; font-family: var(--sans); background: white;
+  }
+  input[type=password] { letter-spacing: 0.2em; }
+  .error { color: var(--danger); font-size: 0.85rem; margin-top: 10px; }
+
+  /* Cards */
+  .card {
+    background: white; border: 1px solid var(--line); border-radius: 10px;
+    padding: 18px 20px; margin-bottom: 16px;
+  }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 560px) { .grid2 { grid-template-columns: 1fr; } }
+
+  .stat { text-align: left; }
+  .stat .label { font-size: 0.78rem; color: var(--muted); }
+  .stat .value { font-size: 1.5rem; font-weight: 700; }
+
+  .line-item {
+    display: flex; gap: 8px; margin-bottom: 8px; align-items: center;
+  }
+  .line-item select { flex: 1.4; }
+  .line-item input { flex: 1; }
+  .remove-line { background: none; border: none; color: var(--danger); cursor: pointer; font-size: 1.1rem; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  tr.flagged { background: var(--danger-bg); }
+
+  .tabs { display: flex; gap: 4px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+  .tab { padding: 10px 14px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; font-size: 0.92rem; }
+  .tab.active { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+
+  .review-box { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-top: 16px; }
+  .review-row { display: flex; justify-content: space-between; padding: 4px 0; }
+  .review-row.total { font-weight: 700; border-top: 1px solid var(--line); margin-top: 8px; padding-top: 8px; }
+  .match { color: var(--accent); }
+  .mismatch { color: var(--danger); }
+
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; }
+  .badge.ok { background: var(--ok-bg); color: var(--accent-dark); }
+  .badge.flag { background: var(--danger-bg); color: var(--danger); }
+
+  .hidden { display: none !important; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  .row.between { justify-content: space-between; }
+  .muted { color: var(--muted); font-size: 0.85rem; }
+</style>
+</head>
+<body>
+
+<div id="app" class="wrap">Loading…</div>
+
+<script>
+/* ====================================================================
+   CONFIG — paste your deployed Google Apps Script Web App URL below
+   ==================================================================== */
+const API_URL = "PASTE_YOUR_APPS_SCRIPT_URL_HERE";
+
+/* ==================== API helper ====================
+   Uses text/plain content-type on purpose — this avoids a CORS
+   "preflight" request that Google Apps Script cannot handle. */
+async function api(action, payload) {
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action, ...payload })
+  });
+  return res.json();
+}
+
+/* ==================== State ==================== */
+let state = {
+  user: JSON.parse(localStorage.getItem('stationUser') || 'null'),
+  stations: [],
+  categories: [],
+  expenseLines: [],
+  deliveryLines: []
+};
+
+const peso = n => '₱' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const app = document.getElementById('app');
+
+function logout() {
+  localStorage.removeItem('stationUser');
+  state.user = null;
+  render();
+}
+
+/* ==================== Render router ==================== */
+async function render() {
+  if (!state.user) return renderLogin();
+  if (state.user.role === 'owner') return renderOwner();
+  return renderManager();
+}
+
+/* ==================== LOGIN ==================== */
+function renderLogin() {
+  app.innerHTML = `
+    <div class="login-box">
+      <h1>Station Ledger</h1>
+      <p class="sub">Enter your Employee ID and PIN</p>
+      <label>Employee ID</label>
+      <input id="employeeId" autocomplete="off" placeholder="e.g. MGR1">
+      <label>6-Digit PIN</label>
+      <input id="pin" type="password" maxlength="6" inputmode="numeric" placeholder="••••••">
+      <button class="btn" style="width:100%; margin-top:20px;" onclick="doLogin()">Log In</button>
+      <div id="loginError" class="error"></div>
+    </div>
+  `;
+}
+
+async function doLogin() {
+  const employeeId = document.getElementById('employeeId').value.trim();
+  const pin = document.getElementById('pin').value.trim();
+  const errEl = document.getElementById('loginError');
+  errEl.textContent = '';
+  if (!employeeId || !pin) { errEl.textContent = 'Enter both fields.'; return; }
+  try {
+    const res = await api('login', { employeeId, pin });
+    if (!res.success) { errEl.textContent = res.error || 'Login failed.'; return; }
+    state.user = res.user;
+    localStorage.setItem('stationUser', JSON.stringify(res.user));
+    render();
+  } catch (e) {
+    errEl.textContent = 'Could not reach the server. Check the API_URL setup.';
+  }
+}
+
+/* ==================== Shared: load stations + categories ==================== */
+async function loadRefData() {
+  const [s, c] = await Promise.all([api('getStations', {}), api('getCategories', {})]);
+  state.stations = s.stations || [];
+  state.categories = c.categories || [];
+}
+
+function stationName(id) {
+  const s = state.stations.find(x => x.StationID === id);
+  return s ? s.StationName : id;
+}
+
+/* ==================== MANAGER VIEW ==================== */
+async function renderManager() {
+  app.innerHTML = `<p class="muted">Loading…</p>`;
+  await loadRefData();
+  state.expenseLines = [];
+  state.deliveryLines = [];
+
+  app.innerHTML = `
+    <div class="topbar">
+      <div>
+        <h1>${stationName(state.user.stationId)}</h1>
+        <div class="who">${state.user.name} · ${state.user.employeeId}</div>
+      </div>
+      <button class="btn secondary small" onclick="logout()">Log Out</button>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" data-tab="entry" onclick="switchTab('entry')">New Shift Entry</div>
+      <div class="tab" data-tab="history" onclick="switchTab('history')">History</div>
+    </div>
+
+    <div id="tab-entry">${entryFormHtml()}</div>
+    <div id="tab-history" class="hidden"></div>
+  `;
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.getElementById('tab-entry').classList.toggle('hidden', name !== 'entry');
+  document.getElementById('tab-history').classList.toggle('hidden', name !== 'history');
+  if (name === 'history') loadManagerHistory();
+}
+
+function entryFormHtml() {
+  const today = new Date().toISOString().slice(0, 10);
+  return `
+    <div class="card">
+      <h2 style="margin-top:0;">Shift Date</h2>
+      <input type="date" id="shiftDate" value="${today}">
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0;">Money In</h2>
+      <label>Cash Sales</label>
+      <input type="number" id="cashSales" value="0" step="0.01">
+      <label>Card / E-wallet Sales</label>
+      <input type="number" id="cardSales" value="0" step="0.01">
+      <label>Receivables Collected</label>
+      <input type="number" id="receivablesCollected" value="0" step="0.01">
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0;">Money Out</h2>
+      <label>Cash Deposited to Bank</label>
+      <input type="number" id="cashDeposited" value="0" step="0.01">
+
+      <label style="margin-top:18px;">Operating Expenses</label>
+      <div id="expenseLines"></div>
+      <button class="btn secondary small" onclick="addLine('Expense')">+ Add Expense Line</button>
+
+      <label style="margin-top:18px;">Delivery / Supplier Payments</label>
+      <div id="deliveryLines"></div>
+      <button class="btn secondary small" onclick="addLine('Delivery')">+ Add Delivery Line</button>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0;">Actual Cash Remaining / Deposited</h2>
+      <p class="muted">Enter the amount you physically counted at end of shift.</p>
+      <input type="number" id="actualBalance" value="0" step="0.01">
+    </div>
+
+    <button class="btn" onclick="reviewEntry()">Review Entry</button>
+    <div id="reviewBox"></div>
+  `;
+}
+
+function categoryOptions(type) {
+  return state.categories.filter(c => c.Type === type)
+    .map(c => `<option value="${c.Name}">${c.Name}</option>`).join('');
+}
+
+function addLine(type) {
+  const arr = type === 'Expense' ? state.expenseLines : state.deliveryLines;
+  arr.push({ category: '', amount: 0 });
+  renderLines(type);
+}
+
+function renderLines(type) {
+  const arr = type === 'Expense' ? state.expenseLines : state.deliveryLines;
+  const containerId = type === 'Expense' ? 'expenseLines' : 'deliveryLines';
+  const container = document.getElementById(containerId);
+  container.innerHTML = arr.map((line, i) => `
+    <div class="line-item">
+      <select onchange="updateLine('${type}', ${i}, 'category', this.value)">
+        <option value="">Select category…</option>
+        ${categoryOptions(type)}
+      </select>
+      <input type="number" placeholder="Amount" step="0.01" value="${line.amount}"
+        onchange="updateLine('${type}', ${i}, 'amount', this.value)">
+      <button class="remove-line" onclick="removeLine('${type}', ${i})">✕</button>
+    </div>
+  `).join('');
+  // restore selected category values
+  arr.forEach((line, i) => {
+    const sel = container.children[i].querySelector('select');
+    if (sel) sel.value = line.category;
+  });
+}
+
+function updateLine(type, i, field, value) {
+  const arr = type === 'Expense' ? state.expenseLines : state.deliveryLines;
+  arr[i][field] = field === 'amount' ? Number(value) : value;
+}
+
+function removeLine(type, i) {
+  const arr = type === 'Expense' ? state.expenseLines : state.deliveryLines;
+  arr.splice(i, 1);
+  renderLines(type);
+}
+
+function currentEntryValues() {
+  const num = id => Number(document.getElementById(id).value || 0);
+  const expenseTotal = state.expenseLines.reduce((s, l) => s + Number(l.amount || 0), 0);
+  const deliveryTotal = state.deliveryLines.reduce((s, l) => s + Number(l.amount || 0), 0);
+  const moneyIn = num('cashSales') + num('cardSales') + num('receivablesCollected');
+  const moneyOut = num('cashDeposited') + expenseTotal + deliveryTotal;
+  const expected = moneyIn - moneyOut;
+  const actual = num('actualBalance');
+  return { moneyIn, moneyOut, expected, actual, variance: actual - expected };
+}
+
+function reviewEntry() {
+  const v = currentEntryValues();
+  const matches = Math.abs(v.variance) < 0.01;
+  document.getElementById('reviewBox').innerHTML = `
+    <div class="review-box">
+      <div class="review-row"><span>Total Money In</span><span class="num">${peso(v.moneyIn)}</span></div>
+      <div class="review-row"><span>Total Money Out</span><span class="num">${peso(v.moneyOut)}</span></div>
+      <div class="review-row total"><span>Expected Balance</span><span class="num">${peso(v.expected)}</span></div>
+      <div class="review-row"><span>Actual Entered</span><span class="num">${peso(v.actual)}</span></div>
+      <div class="review-row total">
+        <span>${matches ? 'Matches' : 'Variance'}</span>
+        <span class="num ${matches ? 'match' : 'mismatch'}">${matches ? '✓ Matches' : peso(v.variance)}</span>
+      </div>
+      ${!matches ? `
+        <label>Reason for variance (required)</label>
+        <input id="varianceNote" placeholder="e.g. gave wrong change, short delivery, etc.">
+      ` : ''}
+      <button class="btn" style="width:100%; margin-top:14px;" onclick="confirmSubmit(${matches})">Confirm & Submit</button>
+    </div>
+  `;
+}
+
+async function confirmSubmit(matches) {
+  const num = id => Number(document.getElementById(id).value || 0);
+  let note = '';
+  if (!matches) {
+    note = document.getElementById('varianceNote').value.trim();
+    if (!note) { alert('Please add a short reason for the variance before submitting.'); return; }
+  }
+  const payload = {
+    stationId: state.user.stationId,
+    employeeId: state.user.employeeId,
+    shiftDate: document.getElementById('shiftDate').value,
+    cashSales: num('cashSales'),
+    cardSales: num('cardSales'),
+    receivablesCollected: num('receivablesCollected'),
+    cashDeposited: num('cashDeposited'),
+    expenseLines: state.expenseLines,
+    deliveryLines: state.deliveryLines,
+    actualBalance: num('actualBalance'),
+    note
+  };
+  const res = await api('submitEntry', payload);
+  if (res.success) {
+    alert('Shift entry submitted.');
+    renderManager();
+  } else {
+    alert('Error: ' + res.error);
+  }
+}
+
+async function loadManagerHistory() {
+  const box = document.getElementById('tab-history');
+  box.innerHTML = '<p class="muted">Loading…</p>';
+  const res = await api('getHistory', { stationId: state.user.stationId });
+  box.innerHTML = historyTableHtml(res.entries || []);
+}
+
+function historyTableHtml(entries) {
+  if (!entries.length) return '<p class="muted">No entries yet.</p>';
+  return `
+    <table>
+      <tr><th>Date</th><th>In</th><th>Out</th><th>Variance</th><th>Status</th></tr>
+      ${entries.map(e => {
+        const flagged = Math.abs(e.Variance) > 0.01;
+        return `<tr class="${flagged ? 'flagged' : ''}">
+          <td>${e.ShiftDate}</td>
+          <td class="num">${peso(Number(e.CashSales) + Number(e.CardSales) + Number(e.ReceivablesCollected))}</td>
+          <td class="num">${peso(Number(e.CashDeposited) + e.ExpenseLines.reduce((s,l)=>s+Number(l.amount||0),0) + e.DeliveryLines.reduce((s,l)=>s+Number(l.amount||0),0))}</td>
+          <td class="num">${peso(e.Variance)}</td>
+          <td>${flagged ? '<span class="badge flag">Flagged</span>' : '<span class="badge ok">OK</span>'}</td>
+        </tr>`;
+      }).join('')}
+    </table>
+  `;
+}
+
+/* ==================== OWNER VIEW ==================== */
+async function renderOwner() {
+  app.innerHTML = `<p class="muted">Loading…</p>`;
+  await loadRefData();
+
+  app.innerHTML = `
+    <div class="topbar">
+      <div>
+        <h1>Owner Dashboard</h1>
+        <div class="who">${state.user.name}</div>
+      </div>
+      <button class="btn secondary small" onclick="logout()">Log Out</button>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" data-tab="dash" onclick="switchOwnerTab('dash')">Dashboard</div>
+      <div class="tab" data-tab="history" onclick="switchOwnerTab('history')">History</div>
+      <div class="tab" data-tab="managers" onclick="switchOwnerTab('managers')">Managers</div>
+      <div class="tab" data-tab="categories" onclick="switchOwnerTab('categories')">Categories</div>
+    </div>
+
+    <div id="owner-dash"></div>
+    <div id="owner-history" class="hidden"></div>
+    <div id="owner-managers" class="hidden"></div>
+    <div id="owner-categories" class="hidden"></div>
+  `;
+  loadOwnerDashboard();
+}
+
+function switchOwnerTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  ['dash','history','managers','categories'].forEach(n =>
+    document.getElementById('owner-' + n).classList.toggle('hidden', n !== name));
+  if (name === 'history') loadOwnerHistory();
+  if (name === 'managers') loadOwnerManagers();
+  if (name === 'categories') loadOwnerCategories();
+}
+
+async function loadOwnerDashboard(range) {
+  range = range || 'today';
+  const box = document.getElementById('owner-dash');
+  box.innerHTML = '<p class="muted">Loading…</p>';
+  const res = await api('getDashboard', { range });
+  const t = res.totals;
+  const stationRows = Object.entries(res.byStation).map(([id, s]) => `
+    <tr class="${s.flagCount > 0 ? 'flagged' : ''}">
+      <td>${s.name}</td>
+      <td class="num">${peso(s.moneyIn)}</td>
+      <td class="num">${peso(s.moneyOut)}</td>
+      <td class="num">${peso(s.variance)}</td>
+      <td>${s.flagCount > 0 ? `<span class="badge flag">${s.flagCount} flagged</span>` : '<span class="badge ok">OK</span>'}</td>
+    </tr>
+  `).join('');
+
+  box.innerHTML = `
+    <div class="row" style="margin-bottom:14px;">
+      ${['today','week','month','year'].map(r =>
+        `<button class="btn ${r===range?'':'secondary'} small" onclick="loadOwnerDashboard('${r}')">${r[0].toUpperCase()+r.slice(1)}</button>`
+      ).join('')}
+    </div>
+    <div class="grid2">
+      <div class="card stat"><div class="label">Total Money In</div><div class="value num">${peso(t.moneyIn)}</div></div>
+      <div class="card stat"><div class="label">Total Money Out</div><div class="value num">${peso(t.moneyOut)}</div></div>
+      <div class="card stat"><div class="label">Net Variance</div><div class="value num" style="color:${Math.abs(t.variance)>0.01?'var(--danger)':'var(--accent)'}">${peso(t.variance)}</div></div>
+      <div class="card stat"><div class="label">Flagged Shifts</div><div class="value">${t.flagCount} / ${t.entryCount}</div></div>
+    </div>
+    <h2>By Station</h2>
+    <div class="card">
+      <table>
+        <tr><th>Station</th><th>In</th><th>Out</th><th>Variance</th><th>Status</th></tr>
+        ${stationRows || '<tr><td colspan="5" class="muted">No data yet.</td></tr>'}
+      </table>
+    </div>
+  `;
+}
+
+async function loadOwnerHistory() {
+  const box = document.getElementById('owner-history');
+  box.innerHTML = `
+    <div class="row" style="margin-bottom:14px;">
+      <select id="filterStation">
+        <option value="all">All Stations</option>
+        ${state.stations.map(s => `<option value="${s.StationID}">${s.StationName}</option>`).join('')}
+      </select>
+      <input type="date" id="filterFrom">
+      <input type="date" id="filterTo">
+      <button class="btn small" onclick="applyHistoryFilter()">Filter</button>
+      <button class="btn secondary small" onclick="exportHistoryCsv()">Export CSV</button>
+    </div>
+    <div id="ownerHistoryTable" class="card"><p class="muted">Loading…</p></div>
+  `;
+  applyHistoryFilter();
+}
+
+let lastHistoryEntries = [];
+
+async function applyHistoryFilter() {
+  const stationId = document.getElementById('filterStation').value;
+  const dateFrom = document.getElementById('filterFrom').value;
+  const dateTo = document.getElementById('filterTo').value;
+  const res = await api('getHistory', { stationId, dateFrom, dateTo });
+  lastHistoryEntries = res.entries || [];
+  document.getElementById('ownerHistoryTable').innerHTML = `
+    <table>
+      <tr><th>Date</th><th>Station</th><th>In</th><th>Out</th><th>Variance</th><th>Status</th></tr>
+      ${lastHistoryEntries.map(e => {
+        const flagged = Math.abs(e.Variance) > 0.01;
+        const out = Number(e.CashDeposited) + e.ExpenseLines.reduce((s,l)=>s+Number(l.amount||0),0) + e.DeliveryLines.reduce((s,l)=>s+Number(l.amount||0),0);
+        return `<tr class="${flagged?'flagged':''}">
+          <td>${e.ShiftDate}</td>
+          <td>${stationName(e.StationID)}</td>
+          <td class="num">${peso(Number(e.CashSales)+Number(e.CardSales)+Number(e.ReceivablesCollected))}</td>
+          <td class="num">${peso(out)}</td>
+          <td class="num">${peso(e.Variance)}</td>
+          <td>${flagged ? '<span class="badge flag">Flagged</span>' : '<span class="badge ok">OK</span>'}</td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="6" class="muted">No entries found.</td></tr>'}
+    </table>
+  `;
+}
+
+function exportHistoryCsv() {
+  const rows = [['Date','Station','EmployeeID','CashSales','CardSales','ReceivablesCollected','CashDeposited','Variance','Note']];
+  lastHistoryEntries.forEach(e => rows.push([e.ShiftDate, stationName(e.StationID), e.EmployeeID, e.CashSales, e.CardSales, e.ReceivablesCollected, e.CashDeposited, e.Variance, (e.Note||'').replace(/,/g,';')]));
+  const csv = rows.map(r => r.join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'station_history.csv';
+  a.click();
+}
+
+async function loadOwnerManagers() {
+  const box = document.getElementById('owner-managers');
+  box.innerHTML = '<p class="muted">Loading…</p>';
+  const res = await api('getManagers', {});
+  const users = res.users || [];
+  box.innerHTML = `
+    <div class="card">
+      <h2 style="margin-top:0;">Add Manager</h2>
+      <div class="grid2">
+        <div><label>Employee ID</label><input id="newEmpId"></div>
+        <div><label>6-Digit PIN</label><input id="newPin" maxlength="6"></div>
+        <div><label>Name</label><input id="newName"></div>
+        <div><label>Station</label>
+          <select id="newStation">${state.stations.map(s=>`<option value="${s.StationID}">${s.StationName}</option>`).join('')}</select>
+        </div>
+      </div>
+      <button class="btn" style="margin-top:12px;" onclick="submitAddManager()">Add Manager</button>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0;">Current Users</h2>
+      <table>
+        <tr><th>Employee ID</th><th>Name</th><th>Role</th><th>Station</th><th></th></tr>
+        ${users.map(u => `
+          <tr>
+            <td>${u.EmployeeID}</td><td>${u.Name}</td><td>${u.Role}</td>
+            <td>${u.StationID ? stationName(u.StationID) : '—'}</td>
+            <td>
+              <button class="btn secondary small" onclick="promptResetPin('${u.EmployeeID}')">Reset PIN</button>
+              ${u.Role !== 'owner' ? `<button class="btn danger small" onclick="removeManagerConfirm('${u.EmployeeID}')">Remove</button>` : ''}
+            </td>
+          </tr>`).join('')}
+      </table>
+    </div>
+  `;
+}
+
+async function submitAddManager() {
+  const employeeId = document.getElementById('newEmpId').value.trim();
+  const pin = document.getElementById('newPin').value.trim();
+  const name = document.getElementById('newName').value.trim();
+  const stationId = document.getElementById('newStation').value;
+  if (!employeeId || !pin || !name) { alert('Fill in all fields.'); return; }
+  await api('addManager', { employeeId, pin, name, stationId, role: 'manager' });
+  loadOwnerManagers();
+}
+
+async function removeManagerConfirm(employeeId) {
+  if (!confirm('Remove this user?')) return;
+  await api('removeManager', { employeeId });
+  loadOwnerManagers();
+}
+
+async function promptResetPin(employeeId) {
+  const newPin = prompt('Enter new 6-digit PIN for ' + employeeId);
+  if (!newPin) return;
+  await api('resetPin', { employeeId, newPin });
+  alert('PIN updated.');
+}
+
+async function loadOwnerCategories() {
+  const box = document.getElementById('owner-categories');
+  const expenseCats = state.categories.filter(c => c.Type === 'Expense');
+  const deliveryCats = state.categories.filter(c => c.Type === 'Delivery');
+  box.innerHTML = `
+    <div class="grid2">
+      <div class="card">
+        <h2 style="margin-top:0;">Expense Categories</h2>
+        ${expenseCats.map(c => `
+          <div class="row between" style="padding:6px 0; border-bottom:1px solid var(--line);">
+            <span>${c.Name}</span>
+            <button class="btn danger small" onclick="removeCategoryConfirm('${c.CategoryID}')">Remove</button>
+          </div>`).join('')}
+        <div class="row" style="margin-top:12px;">
+          <input id="newExpenseCat" placeholder="New category name">
+          <button class="btn small" onclick="submitAddCategory('Expense')">Add</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2 style="margin-top:0;">Delivery Categories</h2>
+        ${deliveryCats.map(c => `
+          <div class="row between" style="padding:6px 0; border-bottom:1px solid var(--line);">
+            <span>${c.Name}</span>
+            <button class="btn danger small" onclick="removeCategoryConfirm('${c.CategoryID}')">Remove</button>
+          </div>`).join('')}
+        <div class="row" style="margin-top:12px;">
+          <input id="newDeliveryCat" placeholder="New category name">
+          <button class="btn small" onclick="submitAddCategory('Delivery')">Add</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function submitAddCategory(type) {
+  const id = type === 'Expense' ? 'newExpenseCat' : 'newDeliveryCat';
+  const name = document.getElementById(id).value.trim();
+  if (!name) return;
+  await api('addCategory', { type, name });
+  await loadRefData();
+  loadOwnerCategories();
+}
+
+async function removeCategoryConfirm(categoryId) {
+  if (!confirm('Remove this category? Past entries keep it, but it won\'t show for new entries.')) return;
+  await api('removeCategory', { categoryId });
+  await loadRefData();
+  loadOwnerCategories();
+}
+
+/* ==================== Boot ==================== */
+render();
+</script>
+</body>
+</html>
