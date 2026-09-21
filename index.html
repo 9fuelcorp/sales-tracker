@@ -119,6 +119,14 @@
   .row { display: flex; gap: 10px; align-items: center; }
   .row.between { justify-content: space-between; }
   .muted { color: var(--muted); font-size: 0.85rem; }
+
+  @media print {
+    @page { size: A4; margin: 1.5cm; }
+    body * { visibility: hidden; }
+    #printableReport, #printableReport * { visibility: visible; }
+    #printableReport { position: absolute; left: 0; top: 0; width: 100%; }
+    .no-print { display: none !important; }
+  }
 </style>
 </head>
 <body>
@@ -129,7 +137,7 @@
 /* ====================================================================
    CONFIG — paste your deployed Google Apps Script Web App URL below
    ==================================================================== */
-const API_URL = "https://script.google.com/macros/s/AKfycbyoNHnCiMQfwsqrceE1-usAI2dYWz1attvnVr6DywcKbBQ0g1AzVx_R7Jc8olvYsIha/exec";
+const API_URL = "https://script.google.com/macros/s/AKfycbyYz28Hb3pDnvpFxI0WSDChGsrS0QKdWqulvGktpVL6o_yvEVP7yE5cnrPdN9c9UT1BUw/exec";
 
 /* ==================== API helper ====================
    Uses text/plain content-type on purpose — this avoids a CORS
@@ -149,7 +157,9 @@ let state = {
   stations: [],
   categories: [],
   expenseLines: [],
-  deliveryLines: []
+  deliveryLines: [],
+  cashSalesLines: [],
+  cardSalesLines: []
 };
 
 const peso = n => '₱' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -220,6 +230,8 @@ async function renderManager() {
   await loadRefData();
   state.expenseLines = [];
   state.deliveryLines = [];
+  state.cashSalesLines = [];
+  state.cardSalesLines = [];
 
   app.innerHTML = `
     <div class="topbar">
@@ -232,23 +244,34 @@ async function renderManager() {
 
     <div class="tabs">
       <div class="tab active" data-tab="entry" onclick="switchTab('entry')">New Shift Entry</div>
+      <div class="tab" data-tab="utang" onclick="switchTab('utang')">Utang</div>
       <div class="tab" data-tab="fuel" onclick="switchTab('fuel')">Fuel Reading</div>
       <div class="tab" data-tab="history" onclick="switchTab('history')">History</div>
     </div>
 
     <div id="tab-entry">${entryFormHtml()}</div>
+    <div id="tab-utang" class="hidden"></div>
     <div id="tab-fuel" class="hidden"></div>
     <div id="tab-history" class="hidden"></div>
   `;
+  fillTodayReceivables();
 }
 
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
   document.getElementById('tab-entry').classList.toggle('hidden', name !== 'entry');
+  document.getElementById('tab-utang').classList.toggle('hidden', name !== 'utang');
   document.getElementById('tab-fuel').classList.toggle('hidden', name !== 'fuel');
   document.getElementById('tab-history').classList.toggle('hidden', name !== 'history');
   if (name === 'history') loadManagerHistory();
   if (name === 'fuel') loadFuelTab();
+  if (name === 'utang') loadUtangTab();
+}
+
+async function fillTodayReceivables() {
+  const date = document.getElementById('shiftDate').value;
+  const res = await api('getTodayReceivablesCollected', { stationId: state.user.stationId, date });
+  document.getElementById('receivablesCollected').value = (res.total || 0).toFixed(2);
 }
 
 function entryFormHtml() {
@@ -262,11 +285,15 @@ function entryFormHtml() {
     <div class="card">
       <h2 style="margin-top:0;">Cash In</h2>
       <label>Cash Sales</label>
-      <input type="number" id="cashSales" value="0" step="0.01">
-      <label>Card / E-wallet Sales</label>
-      <input type="number" id="cardSales" value="0" step="0.01">
-      <label>Receivables Collected</label>
-      <input type="number" id="receivablesCollected" value="0" step="0.01">
+      <div id="cashSalesLines"></div>
+      <button class="btn secondary small" onclick="addSaleLine('cash')">+ Add Cash Sale Line</button>
+
+      <label style="margin-top:18px;">Card / E-wallet Sales</label>
+      <div id="cardSalesLines"></div>
+      <button class="btn secondary small" onclick="addSaleLine('card')">+ Add Card/E-wallet Sale Line</button>
+
+      <label style="margin-top:18px;">Receivables Collected (auto from Utang payments today)</label>
+      <input type="number" id="receivablesCollected" value="0" step="0.01" readonly style="background:var(--paper);">
     </div>
 
     <div class="card">
@@ -294,33 +321,40 @@ function entryFormHtml() {
   `;
 }
 
-function categoryOptions(type) {
-  return state.categories.filter(c => c.Type === type)
+const LINE_CONFIG = {
+  Expense:  { arrayKey: 'expenseLines',   containerId: 'expenseLines',   catType: 'Expense'  },
+  Delivery: { arrayKey: 'deliveryLines',  containerId: 'deliveryLines',  catType: 'Delivery' },
+  cash:     { arrayKey: 'cashSalesLines', containerId: 'cashSalesLines', catType: 'Sale'     },
+  card:     { arrayKey: 'cardSalesLines', containerId: 'cardSalesLines', catType: 'Sale'     }
+};
+
+function categoryOptions(catType) {
+  return state.categories.filter(c => c.Type === catType)
     .map(c => `<option value="${c.Name}">${c.Name}</option>`).join('');
 }
 
 function addLine(type) {
-  const arr = type === 'Expense' ? state.expenseLines : state.deliveryLines;
-  arr.push({ category: '', amount: 0 });
+  const cfg = LINE_CONFIG[type];
+  state[cfg.arrayKey].push({ category: '', amount: 0 });
   renderLines(type);
 }
+function addSaleLine(type) { addLine(type); }
 
 function renderLines(type) {
-  const arr = type === 'Expense' ? state.expenseLines : state.deliveryLines;
-  const containerId = type === 'Expense' ? 'expenseLines' : 'deliveryLines';
-  const container = document.getElementById(containerId);
+  const cfg = LINE_CONFIG[type];
+  const arr = state[cfg.arrayKey];
+  const container = document.getElementById(cfg.containerId);
   container.innerHTML = arr.map((line, i) => `
     <div class="line-item">
       <select onchange="updateLine('${type}', ${i}, 'category', this.value)">
         <option value="">Select category…</option>
-        ${categoryOptions(type)}
+        ${categoryOptions(cfg.catType)}
       </select>
       <input type="number" placeholder="Amount" step="0.01" value="${line.amount}"
         onchange="updateLine('${type}', ${i}, 'amount', this.value)">
       <button class="remove-line" onclick="removeLine('${type}', ${i})">✕</button>
     </div>
   `).join('');
-  // restore selected category values
   arr.forEach((line, i) => {
     const sel = container.children[i].querySelector('select');
     if (sel) sel.value = line.category;
@@ -328,26 +362,28 @@ function renderLines(type) {
 }
 
 function updateLine(type, i, field, value) {
-  const arr = type === 'Expense' ? state.expenseLines : state.deliveryLines;
-  arr[i][field] = field === 'amount' ? Number(value) : value;
+  const cfg = LINE_CONFIG[type];
+  state[cfg.arrayKey][i][field] = field === 'amount' ? Number(value) : value;
 }
 
 function removeLine(type, i) {
-  const arr = type === 'Expense' ? state.expenseLines : state.deliveryLines;
-  arr.splice(i, 1);
+  const cfg = LINE_CONFIG[type];
+  state[cfg.arrayKey].splice(i, 1);
   renderLines(type);
 }
 
 function currentEntryValues() {
   const num = id => Number(document.getElementById(id).value || 0);
+  const cashSalesTotal = state.cashSalesLines.reduce((s, l) => s + Number(l.amount || 0), 0);
+  const cardSalesTotal = state.cardSalesLines.reduce((s, l) => s + Number(l.amount || 0), 0);
   const expenseTotal = state.expenseLines.reduce((s, l) => s + Number(l.amount || 0), 0);
   const deliveryTotal = state.deliveryLines.reduce((s, l) => s + Number(l.amount || 0), 0);
   // Total revenue (for display) includes card/e-wallet sales.
-  const moneyIn = num('cashSales') + num('cardSales') + num('receivablesCollected');
+  const moneyIn = cashSalesTotal + cardSalesTotal + num('receivablesCollected');
   const moneyOut = num('cashDeposited') + expenseTotal + deliveryTotal;
   // Expected PHYSICAL CASH excludes card/e-wallet sales — that money never
   // touches the drawer, so it shouldn't be part of the cash reconciliation.
-  const cashMoneyIn = num('cashSales') + num('receivablesCollected');
+  const cashMoneyIn = cashSalesTotal + num('receivablesCollected');
   const expected = cashMoneyIn - moneyOut;
   const actual = num('actualBalance');
   return { moneyIn, moneyOut, expected, actual, variance: actual - expected };
@@ -387,8 +423,8 @@ async function confirmSubmit(matches) {
     stationId: state.user.stationId,
     employeeId: state.user.employeeId,
     shiftDate: document.getElementById('shiftDate').value,
-    cashSales: num('cashSales'),
-    cardSales: num('cardSales'),
+    cashSalesLines: state.cashSalesLines,
+    cardSalesLines: state.cardSalesLines,
     receivablesCollected: num('receivablesCollected'),
     cashDeposited: num('cashDeposited'),
     expenseLines: state.expenseLines,
@@ -429,6 +465,78 @@ function historyTableHtml(entries) {
       }).join('')}
     </table>
   `;
+}
+
+/* ==================== UTANG (Manager) ==================== */
+let customersForStation = [];
+
+async function loadUtangTab() {
+  const box = document.getElementById('tab-utang');
+  box.innerHTML = '<p class="muted">Loading…</p>';
+  const [custRes, summaryRes] = await Promise.all([
+    api('getCustomers', { stationId: state.user.stationId }),
+    api('getReceivablesSummary', { stationId: state.user.stationId })
+  ]);
+  customersForStation = custRes.customers || [];
+  const balances = {};
+  (summaryRes.customers || []).forEach(c => balances[c.customerId] = c);
+
+  if (!customersForStation.length) {
+    box.innerHTML = '<p class="muted">No customers set up for this station yet. Ask the owner to add them.</p>';
+    return;
+  }
+
+  box.innerHTML = `
+    <div class="card">
+      <h2 style="margin-top:0;">Record Utang / Payment</h2>
+      <label>Customer</label>
+      <select id="utangCustomer">
+        ${customersForStation.map(c => `<option value="${c.CustomerID}">${c.Name}</option>`).join('')}
+      </select>
+      <label>Type</label>
+      <select id="utangType">
+        <option value="Charge">New Utang (Charge)</option>
+        <option value="Payment">Payment Received</option>
+      </select>
+      <label>Amount</label>
+      <input type="number" id="utangAmount" value="0" step="0.01">
+      <label>Note (optional)</label>
+      <input type="text" id="utangNote" placeholder="e.g. fuel on credit, partial payment">
+      <button class="btn" style="margin-top:14px;" onclick="submitUtangTransaction()">Submit</button>
+    </div>
+
+    <h2>Current Balances (This Station)</h2>
+    <div class="card">
+      <table>
+        <tr><th>Customer</th><th>Balance</th><th>Days Outstanding</th></tr>
+        ${customersForStation.map(c => {
+          const b = balances[c.CustomerID];
+          return `<tr class="${b && b.daysOutstanding > 0 ? 'flagged' : ''}">
+            <td>${c.Name}</td>
+            <td class="num">${b ? peso(b.balance) : peso(0)}</td>
+            <td>${b ? b.daysOutstanding : 0}</td>
+          </tr>`;
+        }).join('')}
+      </table>
+    </div>
+  `;
+}
+
+async function submitUtangTransaction() {
+  const customerId = document.getElementById('utangCustomer').value;
+  const type = document.getElementById('utangType').value;
+  const amount = Number(document.getElementById('utangAmount').value || 0);
+  const note = document.getElementById('utangNote').value.trim();
+  if (amount <= 0) { alert('Enter an amount greater than 0.'); return; }
+
+  await api('addReceivableTransaction', {
+    customerId, stationId: state.user.stationId, type, amount,
+    date: new Date().toISOString().slice(0,10),
+    employeeId: state.user.employeeId, note
+  });
+  alert('Recorded.');
+  loadUtangTab();
+  fillTodayReceivables(); // keep the shift entry's auto-filled field in sync
 }
 
 /* ==================== FUEL READING (Manager) ==================== */
@@ -555,28 +663,255 @@ async function renderOwner() {
     <div class="tabs">
       <div class="tab active" data-tab="dash" onclick="switchOwnerTab('dash')">Dashboard</div>
       <div class="tab" data-tab="fuel" onclick="switchOwnerTab('fuel')">Fuel</div>
+      <div class="tab" data-tab="receivables" onclick="switchOwnerTab('receivables')">Receivables</div>
+      <div class="tab" data-tab="reports" onclick="switchOwnerTab('reports')">Reports</div>
       <div class="tab" data-tab="history" onclick="switchOwnerTab('history')">History</div>
       <div class="tab" data-tab="managers" onclick="switchOwnerTab('managers')">Managers</div>
       <div class="tab" data-tab="categories" onclick="switchOwnerTab('categories')">Categories</div>
+      <div class="tab" data-tab="notifications" onclick="switchOwnerTab('notifications')">Notifications</div>
     </div>
 
     <div id="owner-dash"></div>
     <div id="owner-fuel" class="hidden"></div>
+    <div id="owner-receivables" class="hidden"></div>
+    <div id="owner-reports" class="hidden"></div>
     <div id="owner-history" class="hidden"></div>
     <div id="owner-managers" class="hidden"></div>
     <div id="owner-categories" class="hidden"></div>
+    <div id="owner-notifications" class="hidden"></div>
   `;
   loadOwnerDashboard();
 }
 
 function switchOwnerTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
-  ['dash','fuel','history','managers','categories'].forEach(n =>
+  ['dash','fuel','receivables','reports','history','managers','categories','notifications'].forEach(n =>
     document.getElementById('owner-' + n).classList.toggle('hidden', n !== name));
   if (name === 'history') loadOwnerHistory();
   if (name === 'managers') loadOwnerManagers();
   if (name === 'categories') loadOwnerCategories();
   if (name === 'fuel') loadOwnerFuel();
+  if (name === 'receivables') loadOwnerReceivables();
+  if (name === 'reports') loadOwnerReports();
+  if (name === 'notifications') loadOwnerNotifications();
+}
+
+async function loadOwnerReceivables() {
+  const box = document.getElementById('owner-receivables');
+  box.innerHTML = '<p class="muted">Loading…</p>';
+  const [custRes, summaryRes] = await Promise.all([api('getCustomers', {}), api('getReceivablesSummary', {})]);
+  const customers = custRes.customers || [];
+  const summary = summaryRes.customers || [];
+  const balanceById = {};
+  summary.forEach(s => balanceById[s.customerId] = s);
+
+  box.innerHTML = `
+    <div class="card">
+      <h2 style="margin-top:0;">Add Customer</h2>
+      <div class="grid2">
+        <div><label>Name</label><input id="newCustomerName"></div>
+        <div><label>Station</label>
+          <select id="newCustomerStation">${state.stations.map(s=>`<option value="${s.StationID}">${s.StationName}</option>`).join('')}</select>
+        </div>
+      </div>
+      <button class="btn" style="margin-top:12px;" onclick="submitAddCustomer()">Add Customer</button>
+    </div>
+
+    <h2>Outstanding Balances (sorted by longest overdue first)</h2>
+    <div class="card">
+      <table>
+        <tr><th>Customer</th><th>Station</th><th>Balance</th><th>Days Outstanding</th></tr>
+        ${summary.map(s => `
+          <tr class="${s.daysOutstanding > 0 ? 'flagged' : ''}">
+            <td>${s.name}</td><td>${stationName(s.stationId)}</td>
+            <td class="num">${peso(s.balance)}</td><td>${s.daysOutstanding}</td>
+          </tr>`).join('') || '<tr><td colspan="4" class="muted">No outstanding balances.</td></tr>'}
+      </table>
+    </div>
+
+    <h2>All Customers</h2>
+    <div class="card">
+      <table>
+        <tr><th>Name</th><th>Station</th><th></th></tr>
+        ${customers.map(c => `
+          <tr>
+            <td>${c.Name}</td><td>${stationName(c.StationID)}</td>
+            <td><button class="btn danger small" onclick="removeCustomerConfirm('${c.CustomerID}')">Remove</button></td>
+          </tr>`).join('')}
+      </table>
+    </div>
+  `;
+}
+
+async function submitAddCustomer() {
+  const name = document.getElementById('newCustomerName').value.trim();
+  const stationId = document.getElementById('newCustomerStation').value;
+  if (!name) { alert('Enter a customer name.'); return; }
+  await api('addCustomer', { name, stationId });
+  loadOwnerReceivables();
+}
+
+async function removeCustomerConfirm(customerId) {
+  if (!confirm('Remove this customer?')) return;
+  await api('removeCustomer', { customerId });
+  loadOwnerReceivables();
+}
+
+/* ==================== REPORTS (Owner) ==================== */
+let lastReportData = null;
+
+async function loadOwnerReports() {
+  const box = document.getElementById('owner-reports');
+  const today = new Date().toISOString().slice(0,10);
+  box.innerHTML = `
+    <div class="card no-print">
+      <div class="grid2">
+        <div><label>Station</label>
+          <select id="reportStation">
+            <option value="all">All Stations</option>
+            ${state.stations.map(s => `<option value="${s.StationID}">${s.StationName}</option>`).join('')}
+          </select>
+        </div>
+        <div><label>Detail Level</label>
+          <select id="reportDetail">
+            <option value="summary">Summary</option>
+            <option value="detailed">Detailed</option>
+          </select>
+        </div>
+        <div><label>From</label><input type="date" id="reportFrom" value="${today}"></div>
+        <div><label>To</label><input type="date" id="reportTo" value="${today}"></div>
+      </div>
+      <button class="btn" style="margin-top:12px;" onclick="generateReport()">Generate Report</button>
+    </div>
+    <div id="reportOutput"></div>
+  `;
+}
+
+async function generateReport() {
+  const stationId = document.getElementById('reportStation').value;
+  const detail = document.getElementById('reportDetail').value;
+  const dateFrom = document.getElementById('reportFrom').value;
+  const dateTo = document.getElementById('reportTo').value;
+
+  const out = document.getElementById('reportOutput');
+  out.innerHTML = '<p class="muted">Generating…</p>';
+  const res = await api('getReportData', { stationId, dateFrom, dateTo });
+  lastReportData = res;
+
+  const cashInTotal = res.cash.reduce((s,e) => s + Number(e.CashSales||0) + Number(e.CardSales||0) + Number(e.ReceivablesCollected||0), 0);
+  const cashOutTotal = res.cash.reduce((s,e) => s + Number(e.CashDeposited||0) + e.ExpenseLines.reduce((a,l)=>a+Number(l.amount||0),0) + e.DeliveryLines.reduce((a,l)=>a+Number(l.amount||0),0), 0);
+  const varianceTotal = res.cash.reduce((s,e) => s + Number(e.Variance||0), 0);
+  const fuelSoldTotal = res.fuel.reduce((s,e) => s + Number(e.LitersSold||0), 0);
+  const fuelDeliveredTotal = res.fuel.reduce((s,e) => s + Number(e.FuelDelivered||0), 0);
+  const fuelVarianceTotal = res.fuel.reduce((s,e) => s + Number(e.Variance||0), 0);
+  const receivablesTotal = res.receivables.reduce((s,c) => s + Number(c.balance||0), 0);
+
+  const stationLabel = stationId === 'all' ? 'All Stations' : stationName(stationId);
+
+  let html = `
+    <div id="printableReport">
+      <div style="text-align:center; margin-bottom:20px;">
+        <img src="logo.png" style="max-width:160px;">
+        <h1 style="margin:8px 0 0;">9th Fuel Hub Corporation</h1>
+        <p class="muted">${stationLabel} — ${dateFrom} to ${dateTo} (${detail === 'summary' ? 'Summary' : 'Detailed'})</p>
+        <p class="muted">Generated ${new Date().toLocaleString()}</p>
+      </div>
+
+      <h2>Cash Summary</h2>
+      <table>
+        <tr><th>Total Cash+Card In</th><th>Total Cash Out</th><th>Net Variance</th></tr>
+        <tr><td class="num">${peso(cashInTotal)}</td><td class="num">${peso(cashOutTotal)}</td><td class="num">${peso(varianceTotal)}</td></tr>
+      </table>
+
+      <h2>Fuel Summary</h2>
+      <table>
+        <tr><th>Delivered</th><th>Sold</th><th>Variance</th></tr>
+        <tr><td class="num">${liters(fuelDeliveredTotal)}</td><td class="num">${liters(fuelSoldTotal)}</td><td class="num">${liters(fuelVarianceTotal)}</td></tr>
+      </table>
+
+      <h2>Receivables Summary</h2>
+      <table>
+        <tr><th>Total Outstanding</th><th>Customers with Balance</th></tr>
+        <tr><td class="num">${peso(receivablesTotal)}</td><td>${res.receivables.length}</td></tr>
+      </table>
+  `;
+
+  if (detail === 'detailed') {
+    html += `
+      <h2>Cash — Shift Detail</h2>
+      <table>
+        <tr><th>Date</th><th>Station</th><th>Cash In</th><th>Card In</th><th>Out</th><th>Variance</th></tr>
+        ${res.cash.map(e => `<tr><td>${e.ShiftDate}</td><td>${stationName(e.StationID)}</td>
+          <td class="num">${peso(e.CashSales)}</td><td class="num">${peso(e.CardSales)}</td>
+          <td class="num">${peso(Number(e.CashDeposited)+e.ExpenseLines.reduce((a,l)=>a+Number(l.amount||0),0)+e.DeliveryLines.reduce((a,l)=>a+Number(l.amount||0),0))}</td>
+          <td class="num">${peso(e.Variance)}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">No entries.</td></tr>'}
+      </table>
+
+      <h2>Fuel — Reading Detail</h2>
+      <table>
+        <tr><th>Date</th><th>Station</th><th>Delivered</th><th>Sold</th><th>Variance</th></tr>
+        ${res.fuel.map(e => `<tr><td>${e.ReadingDate}</td><td>${stationName(e.StationID)}</td>
+          <td class="num">${liters(e.FuelDelivered)}</td><td class="num">${liters(e.LitersSold)}</td>
+          <td class="num">${liters(e.Variance)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">No entries.</td></tr>'}
+      </table>
+
+      <h2>Receivables — Customer Detail</h2>
+      <table>
+        <tr><th>Customer</th><th>Balance</th><th>Days Outstanding</th></tr>
+        ${res.receivables.map(c => `<tr><td>${c.name}</td><td class="num">${peso(c.balance)}</td><td>${c.daysOutstanding}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">None.</td></tr>'}
+      </table>
+    `;
+  }
+
+  html += `</div>
+    <button class="btn no-print" style="margin-top:16px;" onclick="window.print()">Print / Save as PDF</button>
+  `;
+
+  out.innerHTML = html;
+}
+
+/* ==================== NOTIFICATIONS (Owner) ==================== */
+async function loadOwnerNotifications() {
+  const box = document.getElementById('owner-notifications');
+  box.innerHTML = '<p class="muted">Loading…</p>';
+  const res = await api('getEmailRecipients', {});
+  const recipients = res.recipients || [];
+
+  box.innerHTML = `
+    <div class="card">
+      <h2 style="margin-top:0;">Daily Summary Email</h2>
+      <p class="muted">Sends automatically every day at 5:00 PM Philippine Time to the recipients below.</p>
+      ${recipients.map(r => `
+        <div class="row between" style="padding:6px 0; border-bottom:1px solid var(--line);">
+          <span>${r.email}</span>
+          <button class="btn danger small" onclick="removeRecipientConfirm(${r.id})">Remove</button>
+        </div>`).join('') || '<p class="muted">No recipients yet — defaults to 9fuelcorp@gmail.com.</p>'}
+      <div class="row" style="margin-top:12px;">
+        <input id="newRecipientEmail" placeholder="email@example.com">
+        <button class="btn small" onclick="submitAddRecipient()">Add</button>
+      </div>
+      <button class="btn secondary small" style="margin-top:16px;" onclick="sendTestEmailNow()">Send Test Email Now</button>
+    </div>
+  `;
+}
+
+async function submitAddRecipient() {
+  const email = document.getElementById('newRecipientEmail').value.trim();
+  if (!email) return;
+  await api('addEmailRecipient', { email });
+  loadOwnerNotifications();
+}
+
+async function removeRecipientConfirm(rowId) {
+  if (!confirm('Remove this recipient?')) return;
+  await api('removeEmailRecipient', { rowId });
+  loadOwnerNotifications();
+}
+
+async function sendTestEmailNow() {
+  const res = await api('sendTestEmail', {});
+  if (res.success) alert('Test email sent to: ' + res.sentTo.join(', '));
+  else alert('Error: ' + res.error);
 }
 
 async function loadOwnerFuel(range) {
