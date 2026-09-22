@@ -509,6 +509,10 @@ async function loadUtangTab() {
     return;
   }
 
+  const today = new Date();
+  const todayStr = today.toISOString().slice(0,10);
+  const minDate = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0,10);
+
   box.innerHTML = `
     <div class="card">
       <h2 style="margin-top:0;">Record Utang / Payment</h2>
@@ -521,7 +525,10 @@ async function loadUtangTab() {
         <option value="Charge">New Utang (Charge)</option>
         <option value="Payment">Payment Received</option>
       </select>
-      <label>Amount</label>
+      <label>Date</label>
+      <input type="date" id="utangDate" value="${todayStr}" min="${minDate}" max="${todayStr}">
+      <p class="muted" style="margin:4px 0 0;">Can be backdated up to 7 days, for entries logged a bit late.</p>
+      <label style="margin-top:14px;">Amount</label>
       <input type="number" id="utangAmount" value="0" step="0.01">
       <label>Note (optional)</label>
       <input type="text" id="utangNote" placeholder="e.g. fuel on credit, partial payment">
@@ -549,14 +556,16 @@ async function submitUtangTransaction() {
   const customerId = document.getElementById('utangCustomer').value;
   const type = document.getElementById('utangType').value;
   const amount = Number(document.getElementById('utangAmount').value || 0);
+  const date = document.getElementById('utangDate').value;
   const note = document.getElementById('utangNote').value.trim();
   if (amount <= 0) { alert('Enter an amount greater than 0.'); return; }
+  if (!date) { alert('Please select a date.'); return; }
 
-  await api('addReceivableTransaction', {
-    customerId, stationId: state.user.stationId, type, amount,
-    date: new Date().toISOString().slice(0,10),
+  const res = await api('addReceivableTransaction', {
+    customerId, stationId: state.user.stationId, type, amount, date,
     employeeId: state.user.employeeId, note
   });
+  if (!res.success) { alert('Error: ' + res.error); return; }
   await loadUtangTab();
   fillTodayReceivables(); // keep the shift entry's auto-filled field in sync
   showSuccessBanner((type === 'Charge' ? 'Utang recorded' : 'Payment recorded') + ' successfully.');
