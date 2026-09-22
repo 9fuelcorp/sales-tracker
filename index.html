@@ -120,6 +120,13 @@
   .row.between { justify-content: space-between; }
   .muted { color: var(--muted); font-size: 0.85rem; }
 
+  .success-banner {
+    background: var(--ok-bg); color: var(--accent-dark); border: 1px solid var(--accent);
+    border-radius: 8px; padding: 14px 18px; margin-bottom: 18px; font-weight: 600;
+    display: flex; align-items: center; gap: 8px; animation: fadeIn 0.2s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+
   @media print {
     @page { size: A4; margin: 1.5cm; }
     body * { visibility: hidden; }
@@ -415,6 +422,16 @@ function reviewEntry() {
   `;
 }
 
+/* ==================== Success banner helper ==================== */
+function showSuccessBanner(message) {
+  const banner = document.createElement('div');
+  banner.className = 'success-banner';
+  banner.innerHTML = `<span>✓ ${message}</span>`;
+  app.prepend(banner);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  setTimeout(() => banner.remove(), 4000);
+}
+
 async function confirmSubmit(matches) {
   const num = id => Number(document.getElementById(id).value || 0);
   let note = '';
@@ -435,12 +452,15 @@ async function confirmSubmit(matches) {
     actualBalance: num('actualBalance'),
     note
   };
+  const submitBtn = document.querySelector('#reviewBox .btn');
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Submitting…'; }
   const res = await api('submitEntry', payload);
   if (res.success) {
-    alert('Shift entry submitted.');
-    renderManager();
+    await renderManager();
+    showSuccessBanner('Shift entry submitted successfully. The form below is a fresh, blank entry.');
   } else {
     alert('Error: ' + res.error);
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Confirm & Submit'; }
   }
 }
 
@@ -537,9 +557,9 @@ async function submitUtangTransaction() {
     date: new Date().toISOString().slice(0,10),
     employeeId: state.user.employeeId, note
   });
-  alert('Recorded.');
-  loadUtangTab();
+  await loadUtangTab();
   fillTodayReceivables(); // keep the shift entry's auto-filled field in sync
+  showSuccessBanner((type === 'Charge' ? 'Utang recorded' : 'Payment recorded') + ' successfully.');
 }
 
 /* ==================== FUEL READING (Manager) ==================== */
@@ -642,8 +662,8 @@ async function confirmFuelSubmit(matches) {
   };
   const res = await api('submitFuelEntry', payload);
   if (res.success) {
-    alert('Fuel reading submitted.');
-    loadFuelTab();
+    await loadFuelTab();
+    showSuccessBanner('Fuel reading submitted successfully.');
   } else {
     alert('Error: ' + res.error);
   }
@@ -760,13 +780,15 @@ async function submitAddCustomer() {
   const stationId = document.getElementById('newCustomerStation').value;
   if (!name) { alert('Enter a customer name.'); return; }
   await api('addCustomer', { name, stationId });
-  loadOwnerReceivables();
+  await loadOwnerReceivables();
+  showSuccessBanner('Customer added successfully.');
 }
 
 async function removeCustomerConfirm(customerId) {
   if (!confirm('Remove this customer?')) return;
   await api('removeCustomer', { customerId });
-  loadOwnerReceivables();
+  await loadOwnerReceivables();
+  showSuccessBanner('Customer removed.');
 }
 
 /* ==================== REPORTS (Owner) ==================== */
@@ -911,18 +933,20 @@ async function submitAddRecipient() {
   const email = document.getElementById('newRecipientEmail').value.trim();
   if (!email) return;
   await api('addEmailRecipient', { email });
-  loadOwnerNotifications();
+  await loadOwnerNotifications();
+  showSuccessBanner('Recipient added successfully.');
 }
 
 async function removeRecipientConfirm(rowId) {
   if (!confirm('Remove this recipient?')) return;
   await api('removeEmailRecipient', { rowId });
-  loadOwnerNotifications();
+  await loadOwnerNotifications();
+  showSuccessBanner('Recipient removed.');
 }
 
 async function sendTestEmailNow() {
   const res = await api('sendTestEmail', {});
-  if (res.success) alert('Test email sent to: ' + res.sentTo.join(', '));
+  if (res.success) showSuccessBanner('Test email sent to: ' + res.sentTo.join(', '));
   else alert('Error: ' + res.error);
 }
 
@@ -990,13 +1014,15 @@ async function submitAddFuelType(stationId) {
   const name = input.value.trim();
   if (!name) return;
   await api('addFuelType', { stationId, name });
-  loadOwnerFuel();
+  await loadOwnerFuel();
+  showSuccessBanner('Fuel type added successfully.');
 }
 
 async function removeFuelTypeConfirm(fuelTypeId) {
   if (!confirm('Remove this fuel type?')) return;
   await api('removeFuelType', { fuelTypeId });
-  loadOwnerFuel();
+  await loadOwnerFuel();
+  showSuccessBanner('Fuel type removed.');
 }
 
 async function loadOwnerDashboard(range) {
@@ -1149,28 +1175,43 @@ async function submitAddManager() {
   const stationId = role === 'manager' ? document.getElementById('newStation').value : '';
   if (!employeeId || !pin || !name) { alert('Fill in all fields.'); return; }
   await api('addManager', { employeeId, pin, name, stationId, role });
-  loadOwnerManagers();
+  await loadOwnerManagers();
+  showSuccessBanner('User added successfully.');
 }
 
 async function removeManagerConfirm(employeeId) {
   if (!confirm('Remove this user?')) return;
   await api('removeManager', { employeeId });
-  loadOwnerManagers();
+  await loadOwnerManagers();
+  showSuccessBanner('User removed.');
 }
 
 async function promptResetPin(employeeId) {
   const newPin = prompt('Enter new 6-digit PIN for ' + employeeId);
   if (!newPin) return;
   await api('resetPin', { employeeId, newPin });
-  alert('PIN updated.');
+  showSuccessBanner('PIN updated successfully for ' + employeeId + '.');
 }
 
 async function loadOwnerCategories() {
   const box = document.getElementById('owner-categories');
+  const saleCats = state.categories.filter(c => c.Type === 'Sale');
   const expenseCats = state.categories.filter(c => c.Type === 'Expense');
   const deliveryCats = state.categories.filter(c => c.Type === 'Delivery');
   box.innerHTML = `
     <div class="grid2">
+      <div class="card">
+        <h2 style="margin-top:0;">Sale Categories (Cash & Card)</h2>
+        ${saleCats.map(c => `
+          <div class="row between" style="padding:6px 0; border-bottom:1px solid var(--line);">
+            <span>${c.Name}</span>
+            <button class="btn danger small" onclick="removeCategoryConfirm('${c.CategoryID}')">Remove</button>
+          </div>`).join('')}
+        <div class="row" style="margin-top:12px;">
+          <input id="newSaleCat" placeholder="New category name">
+          <button class="btn small" onclick="submitAddCategory('Sale')">Add</button>
+        </div>
+      </div>
       <div class="card">
         <h2 style="margin-top:0;">Expense Categories</h2>
         ${expenseCats.map(c => `
@@ -1200,12 +1241,13 @@ async function loadOwnerCategories() {
 }
 
 async function submitAddCategory(type) {
-  const id = type === 'Expense' ? 'newExpenseCat' : 'newDeliveryCat';
-  const name = document.getElementById(id).value.trim();
+  const idMap = { Sale: 'newSaleCat', Expense: 'newExpenseCat', Delivery: 'newDeliveryCat' };
+  const name = document.getElementById(idMap[type]).value.trim();
   if (!name) return;
   await api('addCategory', { type, name });
   await loadRefData();
   loadOwnerCategories();
+  showSuccessBanner('Category added successfully.');
 }
 
 async function removeCategoryConfirm(categoryId) {
@@ -1213,6 +1255,7 @@ async function removeCategoryConfirm(categoryId) {
   await api('removeCategory', { categoryId });
   await loadRefData();
   loadOwnerCategories();
+  showSuccessBanner('Category removed.');
 }
 
 /* ==================== Boot ==================== */
