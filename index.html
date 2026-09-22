@@ -922,8 +922,8 @@ async function loadOwnerNotifications() {
 
   box.innerHTML = `
     <div class="card">
-      <h2 style="margin-top:0;">Daily Summary Email</h2>
-      <p class="muted">Sends automatically every day at 5:00 PM Philippine Time to the recipients below.</p>
+      <h2 style="margin-top:0;">Recipients</h2>
+      <p class="muted">Used by all three email notifications below.</p>
       ${recipients.map(r => `
         <div class="row between" style="padding:6px 0; border-bottom:1px solid var(--line);">
           <span>${r.email}</span>
@@ -933,7 +933,23 @@ async function loadOwnerNotifications() {
         <input id="newRecipientEmail" placeholder="email@example.com">
         <button class="btn small" onclick="submitAddRecipient()">Add</button>
       </div>
-      <button class="btn secondary small" style="margin-top:16px;" onclick="sendTestEmailNow()">Send Test Email Now</button>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0;">Daily Summary Email</h2>
+      <p class="muted">Sends automatically every day at 5:00 PM Philippine Time — cash, fuel, and receivables totals.</p>
+      <button class="btn secondary small" onclick="sendTestEmailNow()">Send Test Email Now</button>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0;">Flagged Entry Alert</h2>
+      <p class="muted">Sends instantly, the moment any shift entry or fuel reading is submitted with a variance. No test button needed — submit a mismatched entry to see it in action.</p>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0;">Missing Submission Alert</h2>
+      <p class="muted">Checks every day at 6:00 PM Philippine Time whether each station has submitted a shift cash entry yet — flags any that haven't.</p>
+      <button class="btn secondary small" onclick="checkMissingSubmissionsNow()">Run Check Now</button>
     </div>
   `;
 }
@@ -957,6 +973,16 @@ async function sendTestEmailNow() {
   const res = await api('sendTestEmail', {});
   if (res.success) showSuccessBanner('Test email sent to: ' + res.sentTo.join(', '));
   else alert('Error: ' + res.error);
+}
+
+async function checkMissingSubmissionsNow() {
+  const res = await api('checkMissingSubmissionsTest', {});
+  if (!res.success) { alert('Error: ' + res.error); return; }
+  if (res.missingStations.length) {
+    showSuccessBanner('Test alert sent — missing today: ' + res.missingStations.join(', '));
+  } else {
+    showSuccessBanner('Check ran successfully — every station has submitted today, so no alert was sent.');
+  }
 }
 
 async function loadOwnerFuel(range) {
