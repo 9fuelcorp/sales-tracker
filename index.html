@@ -206,9 +206,29 @@ function logout() {
   render();
 }
 
+/* ==================== Auto-logout on inactivity ==================== */
+const INACTIVITY_LIMIT_MS = 15 * 60 * 1000; // 15 minutes — adjust here if needed
+let inactivityTimer = null;
+
+function resetInactivityTimer() {
+  if (!state.user) return; // nothing to log out of
+  clearTimeout(inactivityTimer);
+  inactivityTimer = setTimeout(() => {
+    if (state.user) {
+      logout();
+      alert('You were logged out after 15 minutes of inactivity.');
+    }
+  }, INACTIVITY_LIMIT_MS);
+}
+
+['mousedown', 'mousemove', 'keydown', 'touchstart', 'scroll', 'click'].forEach(evt =>
+  document.addEventListener(evt, resetInactivityTimer, { passive: true })
+);
+
 /* ==================== Render router ==================== */
 async function render() {
   if (!state.user) return renderLogin();
+  resetInactivityTimer();
   if (state.user.role === 'owner') return renderOwner();
   if (state.user.role === 'viewer') return renderOwner(); // viewer reuses owner screens in read-only mode
   return renderManager();
