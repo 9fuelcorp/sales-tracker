@@ -191,6 +191,27 @@ let state = {
 };
 
 const peso = n => '₱' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d)) return dateStr;
+  return d.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+function formatDateTime(tsStr) {
+  if (!tsStr) return '';
+  const d = new Date(tsStr);
+  if (isNaN(d)) return tsStr;
+  return d.toLocaleString('en-PH', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+// Shows when an entry was actually submitted, but only if it differs from the
+// date the manager recorded — flags late or backdated entries without
+// cluttering every normal same-day entry.
+function submittedNote(recordedDateStr, timestampStr) {
+  if (!timestampStr) return '';
+  const tsDateOnly = new Date(timestampStr).toLocaleDateString('en-CA'); // yyyy-mm-dd, local time
+  if (tsDateOnly === recordedDateStr) return '';
+  return `<br><span class="muted" style="font-size:0.78em;">submitted ${formatDateTime(timestampStr)}</span>`;
+}
 const app = document.getElementById('app');
 
 function loadingScreenHtml(message) {
@@ -527,7 +548,7 @@ function historyTableHtml(entries) {
       ${entries.map(e => {
         const flagged = Math.abs(e.Variance) > 0.01;
         return `<tr class="${flagged ? 'flagged' : ''}">
-          <td>${e.ShiftDate}</td>
+          <td>${formatDate(e.ShiftDate)}${submittedNote(e.ShiftDate, e.Timestamp)}</td>
           <td class="num">${peso(Number(e.CashSales) + Number(e.CardSales) + Number(e.ReceivablesCollected))}</td>
           <td class="num">${peso(Number(e.CashDeposited) + e.ExpenseLines.reduce((s,l)=>s+Number(l.amount||0),0) + e.DeliveryLines.reduce((s,l)=>s+Number(l.amount||0),0))}</td>
           <td class="num">${peso(e.Variance)}</td>
@@ -932,7 +953,7 @@ async function generateReport() {
       <h2>Cash — Shift Detail</h2>
       <table>
         <tr><th>Date</th><th>Station</th><th>Cash In</th><th>Card In</th><th>Out</th><th>Variance</th></tr>
-        ${res.cash.map(e => `<tr><td>${e.ShiftDate}</td><td>${stationName(e.StationID)}</td>
+        ${res.cash.map(e => `<tr><td>${formatDate(e.ShiftDate)}${submittedNote(e.ShiftDate, e.Timestamp)}</td><td>${stationName(e.StationID)}</td>
           <td class="num">${peso(e.CashSales)}</td><td class="num">${peso(e.CardSales)}</td>
           <td class="num">${peso(Number(e.CashDeposited)+e.ExpenseLines.reduce((a,l)=>a+Number(l.amount||0),0)+e.DeliveryLines.reduce((a,l)=>a+Number(l.amount||0),0))}</td>
           <td class="num">${peso(e.Variance)}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">No entries.</td></tr>'}
@@ -941,7 +962,7 @@ async function generateReport() {
       <h2>Fuel — Reading Detail</h2>
       <table>
         <tr><th>Date</th><th>Station</th><th>Delivered</th><th>Sold</th><th>Variance</th></tr>
-        ${res.fuel.map(e => `<tr><td>${e.ReadingDate}</td><td>${stationName(e.StationID)}</td>
+        ${res.fuel.map(e => `<tr><td>${formatDate(e.ReadingDate)}${submittedNote(e.ReadingDate, e.Timestamp)}</td><td>${stationName(e.StationID)}</td>
           <td class="num">${liters(e.FuelDelivered)}</td><td class="num">${liters(e.LitersSold)}</td>
           <td class="num">${liters(e.Variance)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">No entries.</td></tr>'}
       </table>
@@ -1179,7 +1200,7 @@ async function applyHistoryFilter() {
         const flagged = Math.abs(e.Variance) > 0.01;
         const out = Number(e.CashDeposited) + e.ExpenseLines.reduce((s,l)=>s+Number(l.amount||0),0) + e.DeliveryLines.reduce((s,l)=>s+Number(l.amount||0),0);
         return `<tr class="${flagged?'flagged':''}">
-          <td>${e.ShiftDate}</td>
+          <td>${formatDate(e.ShiftDate)}${submittedNote(e.ShiftDate, e.Timestamp)}</td>
           <td>${stationName(e.StationID)}</td>
           <td class="num">${peso(Number(e.CashSales)+Number(e.CardSales)+Number(e.ReceivablesCollected))}</td>
           <td class="num">${peso(out)}</td>
