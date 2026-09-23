@@ -187,7 +187,8 @@ let state = {
   expenseLines: [],
   deliveryLines: [],
   cashSalesLines: [],
-  cardSalesLines: []
+  cardSalesLines: [],
+  checkLines: []
 };
 
 const peso = n => '₱' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -211,6 +212,30 @@ function submittedNote(recordedDateStr, timestampStr) {
   const tsDateOnly = new Date(timestampStr).toLocaleDateString('en-CA'); // yyyy-mm-dd, local time
   if (tsDateOnly === recordedDateStr) return '';
   return `<br><span class="muted" style="font-size:0.78em;">submitted ${formatDateTime(timestampStr)}</span>`;
+}
+
+// Reads an image file, resizes it down (keeps uploads small and fast), and
+// returns a base64 data URL. Used for both profile photos and receipt photos.
+function compressImageFile(file, maxDim) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > height && width > maxDim) { height *= maxDim / width; width = maxDim; }
+        else if (height > maxDim) { width *= maxDim / height; height = maxDim; }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.7));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 const app = document.getElementById('app');
 
@@ -311,12 +336,16 @@ async function renderManager() {
   state.deliveryLines = [];
   state.cashSalesLines = [];
   state.cardSalesLines = [];
+  state.checkLines = [];
 
   app.innerHTML = `
     <div class="topbar">
       <div>
         <h1>${stationName(state.user.stationId)}</h1>
-        <div class="who">${state.user.name} · ${state.user.employeeId}</div>
+        <div class="who row" style="gap:8px;">
+          ${state.user.photoBase64 ? `<img src="${state.user.photoBase64}" style="width:24px; height:24px; border-radius:50%; object-fit:cover;">` : ''}
+          <span>${state.user.name} · ${state.user.employeeId}</span>
+        </div>
       </div>
       <button class="btn secondary small" onclick="logout()">Log Out</button>
     </div>
@@ -325,12 +354,14 @@ async function renderManager() {
       <div class="tab active" data-tab="entry" onclick="switchTab('entry')">New Shift Entry</div>
       <div class="tab" data-tab="utang" onclick="switchTab('utang')">Utang</div>
       <div class="tab" data-tab="fuel" onclick="switchTab('fuel')">Fuel Reading</div>
+      <div class="tab" data-tab="custody" onclick="switchTab('custody')">Cash Custody</div>
       <div class="tab" data-tab="history" onclick="switchTab('history')">History</div>
     </div>
 
     <div id="tab-entry">${entryFormHtml()}</div>
     <div id="tab-utang" class="hidden"></div>
     <div id="tab-fuel" class="hidden"></div>
+    <div id="tab-custody" class="hidden"></div>
     <div id="tab-history" class="hidden"></div>
   `;
   fillTodayReceivables();
@@ -341,10 +372,12 @@ function switchTab(name) {
   document.getElementById('tab-entry').classList.toggle('hidden', name !== 'entry');
   document.getElementById('tab-utang').classList.toggle('hidden', name !== 'utang');
   document.getElementById('tab-fuel').classList.toggle('hidden', name !== 'fuel');
+  document.getElementById('tab-custody').classList.toggle('hidden', name !== 'custody');
   document.getElementById('tab-history').classList.toggle('hidden', name !== 'history');
   if (name === 'history') loadManagerHistory();
   if (name === 'fuel') loadFuelTab();
   if (name === 'utang') loadUtangTab();
+  if (name === 'custody') loadCustodyTab();
 }
 
 async function fillTodayReceivables() {
@@ -370,6 +403,11 @@ function entryFormHtml() {
       <label style="margin-top:18px;">Card / E-wallet Sales</label>
       <div id="cardSalesLines"></div>
       <button class="btn secondary small" onclick="addSaleLine('card')">+ Add Card/E-wallet Sale Line</button>
+
+      <label style="margin-top:18px;">Check Payments Received (postdated OK)</label>
+      <div id="checkLines"></div>
+      <button class="btn secondary small" onclick="addCheckLine()">+ Add Check</button>
+      <p class="muted" style="margin:6px 0 0;">Checks count toward revenue right away but are excluded from the physical cash count below — a check isn't cash in the drawer until it clears.</p>
 
       <label style="margin-top:18px;">Receivables Collected (auto from Utang payments today)</label>
       <input type="number" id="receivablesCollected" value="0" step="0.01" readonly style="background:var(--paper);">
@@ -451,21 +489,55 @@ function removeLine(type, i) {
   renderLines(type);
 }
 
+/* ==================== Check lines (bespoke: more fields than category+amount) ==================== */
+function addCheckLine() {
+  state.checkLines.push({ payerName: '', amount: 0, checkNumber: '', bank: '', postDate: '', note: '' });
+  renderCheckLines();
+}
+
+function renderCheckLines() {
+  const container = document.getElementById('checkLines');
+  const today = new Date().toISOString().slice(0,10);
+  container.innerHTML = state.checkLines.map((line, i) => `
+    <div class="card" style="background:var(--paper); margin-bottom:10px;">
+      <div class="row between"><strong>Check #${i + 1}</strong>
+        <button class="remove-line" onclick="removeCheckLine(${i})">✕</button></div>
+      <div class="grid2">
+        <div><label>Payer Name</label><input value="${line.payerName}" onchange="updateCheckLine(${i}, 'payerName', this.value)"></div>
+        <div><label>Amount</label><input type="number" step="0.01" value="${line.amount}" onchange="updateCheckLine(${i}, 'amount', this.value)"></div>
+        <div><label>Check Number</label><input value="${line.checkNumber}" onchange="updateCheckLine(${i}, 'checkNumber', this.value)"></div>
+        <div><label>Bank</label><input value="${line.bank}" onchange="updateCheckLine(${i}, 'bank', this.value)"></div>
+        <div><label>Post-Date (maturity)</label><input type="date" value="${line.postDate}" min="${today}" onchange="updateCheckLine(${i}, 'postDate', this.value)"></div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function updateCheckLine(i, field, value) {
+  state.checkLines[i][field] = field === 'amount' ? Number(value) : value;
+}
+
+function removeCheckLine(i) {
+  state.checkLines.splice(i, 1);
+  renderCheckLines();
+}
+
 function currentEntryValues() {
   const num = id => Number(document.getElementById(id).value || 0);
   const cashSalesTotal = state.cashSalesLines.reduce((s, l) => s + Number(l.amount || 0), 0);
   const cardSalesTotal = state.cardSalesLines.reduce((s, l) => s + Number(l.amount || 0), 0);
+  const checkTotal = state.checkLines.reduce((s, l) => s + Number(l.amount || 0), 0);
   const expenseTotal = state.expenseLines.reduce((s, l) => s + Number(l.amount || 0), 0);
   const deliveryTotal = state.deliveryLines.reduce((s, l) => s + Number(l.amount || 0), 0);
-  // Total revenue (for display) includes card/e-wallet sales.
-  const moneyIn = cashSalesTotal + cardSalesTotal + num('receivablesCollected');
+  // Total revenue (for display) includes card/e-wallet sales and checks.
+  const moneyIn = cashSalesTotal + cardSalesTotal + checkTotal + num('receivablesCollected');
   const moneyOut = num('cashDeposited') + expenseTotal + deliveryTotal;
-  // Expected PHYSICAL CASH excludes card/e-wallet sales — that money never
-  // touches the drawer, so it shouldn't be part of the cash reconciliation.
+  // Expected PHYSICAL CASH excludes card sales AND checks — neither is cash
+  // actually sitting in the drawer, so both stay out of the reconciliation.
   const cashMoneyIn = cashSalesTotal + num('receivablesCollected');
   const expected = cashMoneyIn - moneyOut;
   const actual = num('actualBalance');
-  return { moneyIn, moneyOut, expected, actual, variance: actual - expected };
+  return { moneyIn, moneyOut, expected, actual, checkTotal, variance: actual - expected };
 }
 
 function reviewEntry() {
@@ -473,10 +545,11 @@ function reviewEntry() {
   const matches = Math.abs(v.variance) < 0.01;
   document.getElementById('reviewBox').innerHTML = `
     <div class="review-box">
-      <div class="review-row"><span>Total Revenue (cash + card + receivables)</span><span class="num">${peso(v.moneyIn)}</span></div>
+      <div class="review-row"><span>Total Revenue (cash + card + checks + receivables)</span><span class="num">${peso(v.moneyIn)}</span></div>
+      ${v.checkTotal > 0 ? `<div class="review-row"><span class="muted">— includes ${peso(v.checkTotal)} in checks (Pending until cleared)</span></div>` : ''}
       <div class="review-row"><span>Total Cash Out</span><span class="num">${peso(v.moneyOut)}</span></div>
       <div class="review-row total"><span>Expected Cash on Hand</span><span class="num">${peso(v.expected)}</span></div>
-      <p class="muted" style="margin:2px 0 8px;">Card/e-wallet sales are excluded here — that money never enters the drawer.</p>
+      <p class="muted" style="margin:2px 0 8px;">Card/e-wallet sales and checks are excluded here — that money never enters the drawer.</p>
       <div class="review-row"><span>Actual Cash Counted</span><span class="num">${peso(v.actual)}</span></div>
       <div class="review-row total">
         <span>${matches ? 'Matches' : 'Variance'}</span>
@@ -508,12 +581,14 @@ async function confirmSubmit(matches) {
     note = document.getElementById('varianceNote').value.trim();
     if (!note) { alert('Please add a short reason for the variance before submitting.'); return; }
   }
+  if (!confirm('Please confirm all data above is correct. Submit this shift entry?')) return;
   const payload = {
     stationId: state.user.stationId,
     employeeId: state.user.employeeId,
     shiftDate: document.getElementById('shiftDate').value,
     cashSalesLines: state.cashSalesLines,
     cardSalesLines: state.cardSalesLines,
+    checkLines: state.checkLines,
     receivablesCollected: num('receivablesCollected'),
     cashDeposited: num('cashDeposited'),
     expenseLines: state.expenseLines,
@@ -540,19 +615,27 @@ async function loadManagerHistory() {
   box.innerHTML = historyTableHtml(res.entries || []);
 }
 
+// Shared status badge: flagged (red), approved/resolved (green, different label), or OK.
+function statusBadge(variance, resolvedStatus, tolerance) {
+  const isFlagged = Math.abs(variance) > (tolerance || 0.01);
+  if (isFlagged && resolvedStatus === 'Approved') return '<span class="badge ok">Approved</span>';
+  if (isFlagged) return '<span class="badge flag">Flagged</span>';
+  return '<span class="badge ok">OK</span>';
+}
+
 function historyTableHtml(entries) {
   if (!entries.length) return '<p class="muted">No entries yet.</p>';
   return `
     <table>
       <tr><th>Date</th><th>Cash In</th><th>Cash Out</th><th>Variance</th><th>Status</th></tr>
       ${entries.map(e => {
-        const flagged = Math.abs(e.Variance) > 0.01;
+        const flagged = Math.abs(e.Variance) > 0.01 && e.ResolvedStatus !== 'Approved';
         return `<tr class="${flagged ? 'flagged' : ''}">
           <td>${formatDate(e.ShiftDate)}${submittedNote(e.ShiftDate, e.Timestamp)}</td>
           <td class="num">${peso(Number(e.CashSales) + Number(e.CardSales) + Number(e.ReceivablesCollected))}</td>
           <td class="num">${peso(Number(e.CashDeposited) + e.ExpenseLines.reduce((s,l)=>s+Number(l.amount||0),0) + e.DeliveryLines.reduce((s,l)=>s+Number(l.amount||0),0))}</td>
           <td class="num">${peso(e.Variance)}</td>
-          <td>${flagged ? '<span class="badge flag">Flagged</span>' : '<span class="badge ok">OK</span>'}</td>
+          <td>${statusBadge(e.Variance, e.ResolvedStatus)}</td>
         </tr>`;
       }).join('')}
     </table>
@@ -561,6 +644,86 @@ function historyTableHtml(entries) {
 
 /* ==================== UTANG (Manager) ==================== */
 let customersForStation = [];
+
+/* ==================== CASH CUSTODY (Manager) ==================== */
+async function loadCustodyTab() {
+  const box = document.getElementById('tab-custody');
+  box.innerHTML = '<p class="muted">Loading…</p>';
+  const res = await api('getCashCustody', { stationId: state.user.stationId });
+  const records = res.custody || [];
+  const held = records.filter(r => r.Status === 'Held');
+  const today = new Date().toISOString().slice(0,10);
+
+  box.innerHTML = `
+    <div class="card">
+      <h2 style="margin-top:0;">Log Held Cash</h2>
+      <p class="muted">Use this when cash can't be deposited same-day (weekend, holiday, bank closed) and is instead handed off to someone for safekeeping.</p>
+      <label>Amount</label>
+      <input type="number" id="custodyAmount" value="0" step="0.01">
+      <label>Endorsed To (name)</label>
+      <input type="text" id="custodyEndorsedTo" placeholder="e.g. Juan Dela Cruz">
+      <label>Reason</label>
+      <select id="custodyReason">
+        <option value="Weekend">Weekend — bank closed</option>
+        <option value="Holiday">Holiday — bank closed</option>
+        <option value="Other">Other</option>
+      </select>
+      <label>Date</label>
+      <input type="date" id="custodyDate" value="${today}">
+      <label>Note (optional)</label>
+      <input type="text" id="custodyNote" placeholder="Any additional detail">
+      <button class="btn" style="margin-top:14px;" onclick="submitCashCustody()">Record</button>
+    </div>
+
+    <h2>Currently Held (This Station)</h2>
+    <div class="card">
+      ${held.length ? held.map(r => `
+        <div class="card" style="background:var(--paper); margin-bottom:10px;">
+          <div class="row between"><strong>${peso(r.Amount)}</strong><span class="badge flag">Held</span></div>
+          <p class="muted" style="margin:6px 0;">Endorsed to <strong>${r.EndorsedTo}</strong> — ${r.Reason} — ${formatDate(r.DateHeld)}</p>
+          ${r.Note ? `<p class="muted">${r.Note}</p>` : ''}
+          <label>Deposit Date</label>
+          <input type="date" id="depositDate_${r.CustodyID}" value="${today}">
+          <label>Deposit Receipt Photo (optional)</label>
+          <input type="file" accept="image/*" capture="environment" id="receiptPhoto_${r.CustodyID}">
+          <button class="btn small" style="margin-top:10px;" onclick="markDeposited('${r.CustodyID}')">Mark as Deposited</button>
+        </div>
+      `).join('') : '<p class="muted">Nothing currently held.</p>'}
+    </div>
+  `;
+}
+
+async function submitCashCustody() {
+  const amount = Number(document.getElementById('custodyAmount').value || 0);
+  const endorsedTo = document.getElementById('custodyEndorsedTo').value.trim();
+  const reason = document.getElementById('custodyReason').value;
+  const date = document.getElementById('custodyDate').value;
+  const note = document.getElementById('custodyNote').value.trim();
+  if (amount <= 0) { alert('Enter an amount greater than 0.'); return; }
+  if (!endorsedTo) { alert('Enter who the cash was endorsed to.'); return; }
+  if (!confirm(`Confirm: ${peso(amount)} endorsed to ${endorsedTo} (${reason})?`)) return;
+
+  await api('addCashCustody', {
+    stationId: state.user.stationId, amount, endorsedTo, reason, date,
+    employeeId: state.user.employeeId, note
+  });
+  await loadCustodyTab();
+  showSuccessBanner('Held cash recorded successfully.');
+}
+
+async function markDeposited(custodyId) {
+  const dateDeposited = document.getElementById('depositDate_' + custodyId).value;
+  const fileInput = document.getElementById('receiptPhoto_' + custodyId);
+  if (!confirm('Confirm this cash has now been deposited?')) return;
+
+  let receiptPhotoBase64 = '';
+  if (fileInput.files[0]) {
+    receiptPhotoBase64 = await compressImageFile(fileInput.files[0], 1000);
+  }
+  await api('markCustodyDeposited', { custodyId, dateDeposited, receiptPhotoBase64 });
+  await loadCustodyTab();
+  showSuccessBanner('Marked as deposited successfully.');
+}
 
 async function loadUtangTab() {
   const box = document.getElementById('tab-utang');
@@ -629,6 +792,7 @@ async function submitUtangTransaction() {
   const note = document.getElementById('utangNote').value.trim();
   if (amount <= 0) { alert('Enter an amount greater than 0.'); return; }
   if (!date) { alert('Please select a date.'); return; }
+  if (!confirm('Please confirm: ' + (type === 'Charge' ? 'record a new utang of ' : 'record a payment of ') + peso(amount) + '?')) return;
 
   const res = await api('addReceivableTransaction', {
     customerId, stationId: state.user.stationId, type, amount, date,
@@ -726,6 +890,7 @@ async function confirmFuelSubmit(matches) {
     note = document.getElementById('fuelVarianceNote').value.trim();
     if (!note) { alert('Please add a short reason for the variance before submitting.'); return; }
   }
+  if (!confirm('Please confirm all readings above are correct. Submit this fuel reading?')) return;
   const payload = {
     stationId: state.user.stationId,
     fuelTypeId: document.getElementById('fuelTypeSelect').value,
@@ -775,6 +940,8 @@ async function renderOwner() {
       <div class="tab active" data-tab="dash" onclick="switchOwnerTab('dash')">Dashboard</div>
       <div class="tab" data-tab="fuel" onclick="switchOwnerTab('fuel')">Fuel</div>
       <div class="tab" data-tab="receivables" onclick="switchOwnerTab('receivables')">Receivables</div>
+      <div class="tab" data-tab="checks" onclick="switchOwnerTab('checks')">Checks</div>
+      <div class="tab" data-tab="custody" onclick="switchOwnerTab('custody')">Cash Custody</div>
       <div class="tab" data-tab="reports" onclick="switchOwnerTab('reports')">Reports</div>
       <div class="tab" data-tab="history" onclick="switchOwnerTab('history')">History</div>
       ${adminTabs}
@@ -783,6 +950,8 @@ async function renderOwner() {
     <div id="owner-dash"></div>
     <div id="owner-fuel" class="hidden"></div>
     <div id="owner-receivables" class="hidden"></div>
+    <div id="owner-checks" class="hidden"></div>
+    <div id="owner-custody" class="hidden"></div>
     <div id="owner-reports" class="hidden"></div>
     <div id="owner-history" class="hidden"></div>
     ${adminDivs}
@@ -792,7 +961,7 @@ async function renderOwner() {
 
 function switchOwnerTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
-  ['dash','fuel','receivables','reports','history','managers','categories','notifications'].forEach(n => {
+  ['dash','fuel','receivables','checks','custody','reports','history','managers','categories','notifications'].forEach(n => {
     const el = document.getElementById('owner-' + n);
     if (el) el.classList.toggle('hidden', n !== name);
   });
@@ -801,8 +970,76 @@ function switchOwnerTab(name) {
   if (name === 'categories') loadOwnerCategories();
   if (name === 'fuel') loadOwnerFuel();
   if (name === 'receivables') loadOwnerReceivables();
+  if (name === 'checks') loadOwnerChecks();
+  if (name === 'custody') loadOwnerCustody();
   if (name === 'reports') loadOwnerReports();
   if (name === 'notifications') loadOwnerNotifications();
+}
+
+async function loadOwnerChecks(statusFilter) {
+  const box = document.getElementById('owner-checks');
+  box.innerHTML = '<p class="muted">Loading…</p>';
+  const res = await api('getChecks', { status: statusFilter || '' });
+  const checks = res.checks || [];
+
+  box.innerHTML = `
+    <div class="row" style="margin-bottom:14px;">
+      ${['', 'Pending', 'Cleared', 'Bounced'].map(s =>
+        `<button class="btn ${statusFilter === s || (!statusFilter && !s) ? '' : 'secondary'} small" onclick="loadOwnerChecks('${s}')">${s || 'All'}</button>`
+      ).join('')}
+    </div>
+    <div class="card">
+      <table>
+        <tr><th>Station</th><th>Payer</th><th>Amount</th><th>Check #</th><th>Bank</th><th>Post-Date</th><th>Status</th><th></th></tr>
+        ${checks.map(c => `
+          <tr class="${c.Status === 'Bounced' ? 'flagged' : ''}">
+            <td>${stationName(c.StationID)}</td><td>${c.PayerName}</td>
+            <td class="num">${peso(c.Amount)}</td><td>${c.CheckNumber}</td><td>${c.Bank}</td>
+            <td>${formatDate(c.PostDate)}</td>
+            <td><span class="badge ${c.Status === 'Cleared' ? 'ok' : c.Status === 'Bounced' ? 'flag' : ''}">${c.Status}</span></td>
+            <td>${c.Status === 'Pending' ? `
+              <button class="btn secondary small" onclick="setCheckStatus('${c.CheckID}','Cleared')">Mark Cleared</button>
+              <button class="btn danger small" onclick="setCheckStatus('${c.CheckID}','Bounced')">Mark Bounced</button>
+            ` : ''}</td>
+          </tr>`).join('') || '<tr><td colspan="8" class="muted">No checks recorded.</td></tr>'}
+      </table>
+    </div>
+  `;
+}
+
+async function setCheckStatus(checkId, status) {
+  if (!confirm(`Mark this check as ${status}?`)) return;
+  await api('updateCheckStatus', { checkId, status });
+  await loadOwnerChecks();
+  showSuccessBanner(`Check marked ${status}.`);
+}
+
+async function loadOwnerCustody(statusFilter) {
+  const box = document.getElementById('owner-custody');
+  box.innerHTML = '<p class="muted">Loading…</p>';
+  const res = await api('getCashCustody', { status: statusFilter || '' });
+  const records = res.custody || [];
+
+  box.innerHTML = `
+    <div class="row" style="margin-bottom:14px;">
+      ${['', 'Held', 'Deposited'].map(s =>
+        `<button class="btn ${statusFilter === s || (!statusFilter && !s) ? '' : 'secondary'} small" onclick="loadOwnerCustody('${s}')">${s || 'All'}</button>`
+      ).join('')}
+    </div>
+    <div class="card">
+      ${records.map(r => `
+        <div class="card" style="background:var(--paper); margin-bottom:10px;">
+          <div class="row between">
+            <strong>${peso(r.Amount)} — ${stationName(r.StationID)}</strong>
+            <span class="badge ${r.Status === 'Deposited' ? 'ok' : 'flag'}">${r.Status}</span>
+          </div>
+          <p class="muted" style="margin:6px 0;">Endorsed to <strong>${r.EndorsedTo}</strong> — ${r.Reason} — held since ${formatDate(r.DateHeld)}</p>
+          ${r.Status === 'Deposited' ? `<p class="muted">Deposited ${formatDate(r.DateDeposited)}</p>` : ''}
+          ${r.ReceiptPhotoBase64 ? `<img src="${r.ReceiptPhotoBase64}" style="max-width:200px; border-radius:8px; margin-top:8px;">` : ''}
+        </div>
+      `).join('') || '<p class="muted">No custody records.</p>'}
+    </div>
+  `;
 }
 
 async function loadOwnerReceivables() {
@@ -1133,8 +1370,12 @@ async function loadOwnerDashboard(range) {
   range = range || 'today';
   const box = document.getElementById('owner-dash');
   box.innerHTML = '<p class="muted">Loading…</p>';
-  const res = await api('getDashboard', { range });
+  const [res, flaggedRes] = await Promise.all([
+    api('getDashboard', { range }),
+    api('getFlaggedEntries', {})
+  ]);
   const t = res.totals;
+  const flagged = flaggedRes.entries || [];
   const stationRows = Object.entries(res.byStation).map(([id, s]) => `
     <tr class="${s.flagCount > 0 ? 'flagged' : ''}">
       <td>${s.name}</td>
@@ -1157,6 +1398,22 @@ async function loadOwnerDashboard(range) {
       <div class="card stat"><div class="label">Net Variance</div><div class="value num" style="color:${Math.abs(t.variance)>0.01?'var(--danger)':'var(--accent)'}">${peso(t.variance)}</div></div>
       <div class="card stat"><div class="label">Flagged Shifts</div><div class="value">${t.flagCount} / ${t.entryCount}</div></div>
     </div>
+
+    ${flagged.length ? `
+    <h2>⚠ Unresolved Flags Needing Review (${flagged.length})</h2>
+    <div class="card">
+      ${flagged.map(e => `
+        <div class="card" style="background:var(--danger-bg); margin-bottom:10px;">
+          <div class="row between">
+            <strong>${e.EntryType} — ${stationName(e.StationID)} — ${formatDate(e.Date)}</strong>
+            <span class="num mismatch">${e.EntryType === 'Fuel' ? liters(e.Variance) : peso(e.Variance)}</span>
+          </div>
+          ${e.Note ? `<p class="muted">Manager's note: ${e.Note}</p>` : '<p class="muted">No reason given.</p>'}
+          ${isOwnerRole() ? `<button class="btn small" style="margin-top:8px;" onclick="approveVariance('${e.EntryID}', '${e.EntryType}')">Approve / Mark Justified</button>` : ''}
+        </div>
+      `).join('')}
+    </div>` : ''}
+
     <h2>By Station</h2>
     <div class="card">
       <table>
@@ -1165,6 +1422,14 @@ async function loadOwnerDashboard(range) {
       </table>
     </div>
   `;
+}
+
+async function approveVariance(entryId, entryType) {
+  const note = prompt('Note explaining why this variance is justified:');
+  if (!note) return;
+  await api('resolveVariance', { entryId, entryType, resolvedBy: state.user.name, note });
+  await loadOwnerDashboard();
+  showSuccessBanner('Variance approved and cleared from flags.');
 }
 
 async function loadOwnerHistory() {
@@ -1197,7 +1462,7 @@ async function applyHistoryFilter() {
     <table>
       <tr><th>Date</th><th>Station</th><th>Cash In</th><th>Cash Out</th><th>Variance</th><th>Status</th></tr>
       ${lastHistoryEntries.map(e => {
-        const flagged = Math.abs(e.Variance) > 0.01;
+        const flagged = Math.abs(e.Variance) > 0.01 && e.ResolvedStatus !== 'Approved';
         const out = Number(e.CashDeposited) + e.ExpenseLines.reduce((s,l)=>s+Number(l.amount||0),0) + e.DeliveryLines.reduce((s,l)=>s+Number(l.amount||0),0);
         return `<tr class="${flagged?'flagged':''}">
           <td>${formatDate(e.ShiftDate)}${submittedNote(e.ShiftDate, e.Timestamp)}</td>
@@ -1205,7 +1470,7 @@ async function applyHistoryFilter() {
           <td class="num">${peso(Number(e.CashSales)+Number(e.CardSales)+Number(e.ReceivablesCollected))}</td>
           <td class="num">${peso(out)}</td>
           <td class="num">${peso(e.Variance)}</td>
-          <td>${flagged ? '<span class="badge flag">Flagged</span>' : '<span class="badge ok">OK</span>'}</td>
+          <td>${statusBadge(e.Variance, e.ResolvedStatus)}</td>
         </tr>`;
       }).join('') || '<tr><td colspan="6" class="muted">No entries found.</td></tr>'}
     </table>
@@ -1251,12 +1516,15 @@ async function loadOwnerManagers() {
     <div class="card">
       <h2 style="margin-top:0;">Current Users</h2>
       <table>
-        <tr><th>Employee ID</th><th>Name</th><th>Role</th><th>Station</th><th></th></tr>
+        <tr><th>Photo</th><th>Employee ID</th><th>Name</th><th>Role</th><th>Station</th><th></th></tr>
         ${users.map(u => `
           <tr>
+            <td>${u.PhotoBase64 ? `<img src="${u.PhotoBase64}" style="width:32px; height:32px; border-radius:50%; object-fit:cover;">` : '—'}</td>
             <td>${u.EmployeeID}</td><td>${u.Name}</td><td>${u.Role}</td>
             <td>${u.StationID ? stationName(u.StationID) : '—'}</td>
             <td>
+              <input type="file" accept="image/*" id="photoFile_${u.EmployeeID}" style="display:none;" onchange="uploadUserPhoto('${u.EmployeeID}')">
+              <button class="btn secondary small" onclick="document.getElementById('photoFile_${u.EmployeeID}').click()">Set Photo</button>
               <button class="btn secondary small" onclick="promptResetPin('${u.EmployeeID}')">Reset PIN</button>
               ${u.EmployeeID !== state.user.employeeId ? `<button class="btn danger small" onclick="removeManagerConfirm('${u.EmployeeID}')">Remove</button>` : ''}
             </td>
@@ -1264,6 +1532,15 @@ async function loadOwnerManagers() {
       </table>
     </div>
   `;
+}
+
+async function uploadUserPhoto(employeeId) {
+  const fileInput = document.getElementById('photoFile_' + employeeId);
+  if (!fileInput.files[0]) return;
+  const photoBase64 = await compressImageFile(fileInput.files[0], 300);
+  await api('setUserPhoto', { employeeId, photoBase64 });
+  await loadOwnerManagers();
+  showSuccessBanner('Photo updated successfully.');
 }
 
 function toggleNewUserStationField() {
