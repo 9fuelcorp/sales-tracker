@@ -1035,11 +1035,22 @@ async function loadOwnerCustody(statusFilter) {
           </div>
           <p class="muted" style="margin:6px 0;">Endorsed to <strong>${r.EndorsedTo}</strong> — ${r.Reason} — held since ${formatDate(r.DateHeld)}</p>
           ${r.Status === 'Deposited' ? `<p class="muted">Deposited ${formatDate(r.DateDeposited)}</p>` : ''}
-          ${r.ReceiptPhotoBase64 ? `<img src="${r.ReceiptPhotoBase64}" style="max-width:200px; border-radius:8px; margin-top:8px;">` : ''}
+          ${r.ReceiptPhotoBase64 ? `
+            <div>
+              <img src="${r.ReceiptPhotoBase64}" style="max-width:200px; border-radius:8px; margin-top:8px; display:block;">
+              <button class="btn danger small" style="margin-top:6px;" onclick="removeCustodyPhoto('${r.CustodyID}')">Remove Photo</button>
+            </div>` : ''}
         </div>
       `).join('') || '<p class="muted">No custody records.</p>'}
     </div>
   `;
+}
+
+async function removeCustodyPhoto(custodyId) {
+  if (!confirm('Remove this receipt photo?')) return;
+  await api('clearCustodyPhoto', { custodyId });
+  await loadOwnerCustody();
+  showSuccessBanner('Photo removed.');
 }
 
 async function loadOwnerReceivables() {
@@ -1525,6 +1536,7 @@ async function loadOwnerManagers() {
             <td>
               <input type="file" accept="image/*" id="photoFile_${u.EmployeeID}" style="display:none;" onchange="uploadUserPhoto('${u.EmployeeID}')">
               <button class="btn secondary small" onclick="document.getElementById('photoFile_${u.EmployeeID}').click()">Set Photo</button>
+              ${u.PhotoBase64 ? `<button class="btn danger small" onclick="removeUserPhoto('${u.EmployeeID}')">Remove Photo</button>` : ''}
               <button class="btn secondary small" onclick="promptResetPin('${u.EmployeeID}')">Reset PIN</button>
               ${u.EmployeeID !== state.user.employeeId ? `<button class="btn danger small" onclick="removeManagerConfirm('${u.EmployeeID}')">Remove</button>` : ''}
             </td>
@@ -1541,6 +1553,13 @@ async function uploadUserPhoto(employeeId) {
   await api('setUserPhoto', { employeeId, photoBase64 });
   await loadOwnerManagers();
   showSuccessBanner('Photo updated successfully.');
+}
+
+async function removeUserPhoto(employeeId) {
+  if (!confirm('Remove this photo?')) return;
+  await api('setUserPhoto', { employeeId, photoBase64: '' });
+  await loadOwnerManagers();
+  showSuccessBanner('Photo removed.');
 }
 
 function toggleNewUserStationField() {
