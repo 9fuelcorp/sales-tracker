@@ -204,13 +204,11 @@ function formatDateTime(tsStr) {
   if (isNaN(d)) return tsStr;
   return d.toLocaleString('en-PH', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
-// Shows when an entry was actually submitted, but only if it differs from the
-// date the manager recorded — flags late or backdated entries without
-// cluttering every normal same-day entry.
+// Always shows the exact time an entry was submitted, alongside the date the
+// manager recorded — gives a full audit trail of when data actually came in,
+// not just what date it was logged under.
 function submittedNote(recordedDateStr, timestampStr) {
   if (!timestampStr) return '';
-  const tsDateOnly = new Date(timestampStr).toLocaleDateString('en-CA'); // yyyy-mm-dd, local time
-  if (tsDateOnly === recordedDateStr) return '';
   return `<br><span class="muted" style="font-size:0.78em;">submitted ${formatDateTime(timestampStr)}</span>`;
 }
 
