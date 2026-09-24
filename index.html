@@ -16,6 +16,14 @@
 <meta property="og:image" content="og-image.png">
 <meta property="og:type" content="website">
 
+<!-- PWA: makes "Add to Home Screen" open full-screen like a real app -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#14206b">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Station Ledger">
+
 <style>
   :root {
     --ink: #12204a;
@@ -1658,6 +1666,17 @@ async function removeCategoryConfirm(categoryId) {
 
 /* ==================== Boot ==================== */
 render();
+
+// Register the service worker so "Add to Home Screen" installs as a real,
+// standalone app instead of just a browser bookmark shortcut.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {
+      // Fails silently — the app still works fine as a normal web page,
+      // it just won't offer the "install" experience.
+    });
+  });
+}
 </script>
 </body>
 </html>
